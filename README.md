@@ -10,11 +10,13 @@ spaceframe-ai/
 │   ├── model.py        # 数据模型：节点/杆件/截面/材料/荷载/支座
 │   ├── fem.py          # 有限元内核：12×12 单元矩阵、组装、KU=F、杆端内力
 │   ├── s2k_parser.py   # SAP2000 .s2k 文件解析导入
+│   ├── checks.py        # GB50017 规范校核（强度/稳定/长细比/挠度）
 │   └── __init__.py
 ├── examples/
 │   ├── verify_solver.py  # 7 组经典算例验证（与解析解对拍）
 │   ├── sample_frame.s2k  # 示例 SAP2000 模型文件
-│   └── test_s2k.py       # .s2k 解析器往返测试
+│   ├── test_s2k.py       # .s2k 解析器往返测试
+│   └── test_checks.py    # GB50017 校核模块测试
 └── requirements.txt
 ```
 
@@ -24,6 +26,7 @@ spaceframe-ai/
 pip install -r requirements.txt
 python examples/verify_solver.py   # 有限元内核验证
 python examples/test_s2k.py        # .s2k 解析器测试
+python examples/test_checks.py     # 规范校核测试
 ```
 
 ## 已验证内容（M1）

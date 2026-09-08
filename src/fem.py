@@ -305,17 +305,59 @@ def solve(model: FrameModel) -> AnalysisResult:
 # 6. 内力提取
 # ---------------------------------------------------------------------------
 
-def member_internal_forces(f_local: np.ndarray) -> dict:
-    """把 12 维杆端力整理为易读的杆端内力字典（局部坐标）。
+def member_section_forces(model: FrameModel, member,
+                          f_local: np.ndarray, x: float) -> np.ndarray:
+    """杆件在距 i 端距离 x（局部坐标，m）处的内力向量。
 
-    返回 {N, Vy, Vz, Mx, My, Mz}，每项为 (i端值, j端值)。
-    轴力以拉为正；剪力/弯矩符号遵循局部坐标右手系。
+    返回 [N, Vy, Vz, Mx, My, Mz]（局部坐标）：
+      N  轴力（拉为正）；Vy/Vz 剪力；Mx 扭矩；My/Mz 弯矩。
+
+    由左段平衡导出：
+      N(x)  = -f[0] - wx·x
+      Vy(x) = -f[1] - wy·x
+      Vz(x) = -f[2] - wz·x
+      Mx(x) = -f[3]
+      My(x) = -f[4] + x·f[2] + wz·x²/2
+      Mz(x) = -f[5] + x·f[1] + wy·x²/2
+    其中 f = f_local 为“节点作用于杆件”的杆端力（k·d + f⁰）。
+    """
+    wx, wy, wz = _member_uniform_loads(model, member)
+    return np.array([
+        -f_local[0] - wx * x,
+        -f_local[1] - wy * x,
+        -f_local[2] - wz * x,
+        -f_local[3],
+        -f_local[4] + x * f_local[2] + wz * x * x / 2.0,
+        -f_local[5] + x * f_local[1] + wy * x * x / 2.0,
+    ])
+
+
+def member_extreme_forces(model: FrameModel, member,
+                          f_local: np.ndarray, n_samples: int = 21) -> dict:
+    """沿杆件采样，返回各内力的最大值（绝对值）字典。
+
+    返回 {'N': float, 'Vy': float, 'Vz': float, 'Mx': float,
+          'My': float, 'Mz': float}，均为绝对值极大值。
+    """
+    L = model.member_length(member.id)
+    xs = np.linspace(0.0, L, n_samples)
+    forces = np.array([member_section_forces(model, member, f_local, x)
+                       for x in xs])
+    names = ['N', 'Vy', 'Vz', 'Mx', 'My', 'Mz']
+    return {n: float(np.max(np.abs(forces[:, i]))) for i, n in enumerate(names)}
+
+
+def member_internal_forces(f_local: np.ndarray) -> dict:
+    """把 12 维杆端力整理为易读的杆端内力字典（i 端与 j 端）。
+
+    返回 {N, Vy, Vz, Mx, My, Mz}，每项为 (i端值, j端值)，
+    采用与 member_section_forces 一致的正负约定。
     """
     return {
-        'N':   (f_local[0], -f_local[6]),
-        'Vy':  (f_local[1], -f_local[7]),
-        'Vz':  (f_local[2], -f_local[8]),
-        'Mx':  (f_local[3], -f_local[9]),
-        'My':  (f_local[4], -f_local[10]),
-        'Mz':  (f_local[5], -f_local[11]),
+        'N':   (-f_local[0], f_local[6]),
+        'Vy':  (-f_local[1], f_local[7]),
+        'Vz':  (-f_local[2], f_local[8]),
+        'Mx':  (-f_local[3], f_local[9]),
+        'My':  (-f_local[4], f_local[10]),
+        'Mz':  (-f_local[5], f_local[11]),
     }
