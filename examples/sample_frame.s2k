@@ -1,0 +1,41 @@
+// 示例 SAP2000 导出文件（用于解析器测试）
+// 平面门式刚架：两柱一梁，kN/m 单位
+TABLE:  "PROGRAM CONTROL"
+ ProgramName=SAP2000  Version=21.1.0  ProgLevel=Ultimate  LicenseType=Educational
+ CurrUnits="kN, m, C"
+
+TABLE:  "LOAD PATTERNS"
+ LoadPat=DEAD  Type=DEAD  SelfWeightMult=0
+
+TABLE:  "MATERIAL PROPERTIES"
+ Material=STEEL  MatType=Steel  SymType=Isotropic  E1=2E+08  G12=7.6923E+07  U12=0.3  WeightPerVol=77
+
+TABLE:  "FRAME SECTION PROPERTY DEFINITIONS"
+ SectionName=SECT1  MatProp=STEEL  NationalCode=  Shape=Rectangular  TorsConst=2E-06  I33=4E-05  I22=1E-05  I23=0  Area=0.02  As2=0.0167  As3=0.0167  S33=0.0004  S22=0.0002  Z33=0.0006  Z22=0.0003  R33=0.0577  R22=0.0289
+
+TABLE:  "JOINT COORDINATES"
+ Joint=1  CoordSys=GLOBAL  XorR=0  YorR=0  ZorR=0  SpecialDof=No
+ Joint=2  CoordSys=GLOBAL  XorR=0  YorR=3  ZorR=0  SpecialDof=No
+ Joint=3  CoordSys=GLOBAL  XorR=6  YorR=3  ZorR=0  SpecialDof=No
+ Joint=4  CoordSys=GLOBAL  XorR=6  YorR=0  ZorR=0  SpecialDof=No
+
+TABLE:  "JOINT RESTRAINT ASSIGNMENTS"
+ Joint=1  U1=Yes  U2=Yes  U3=Yes  R1=Yes  R2=Yes  R3=Yes
+ Joint=4  U1=Yes  U2=Yes  U3=Yes  R1=Yes  R2=Yes  R3=Yes
+
+TABLE:  "CONNECTIVITY - FRAME"
+ Frame=1  JointI=1  JointJ=2  IsCurved=No  Length=3
+ Frame=2  JointI=2  JointJ=3  IsCurved=No  Length=6
+ Frame=3  JointI=3  JointJ=4  IsCurved=No  Length=3
+
+TABLE:  "FRAME SECTION ASSIGNMENTS"
+ Frame=1  SectionName=SECT1  MatProp=STEEL
+ Frame=2  SectionName=SECT1  MatProp=STEEL
+ Frame=3  SectionName=SECT1  MatProp=STEEL
+
+TABLE:  "JOINT FORCES"
+ Joint=2  LoadPat=DEAD  FX=20  FY=-30  FZ=0  MX=0  MY=0  MZ=0
+ Joint=3  LoadPat=DEAD  FX=0  FY=-30  FZ=0  MX=0  MY=0  MZ=0
+
+TABLE:  "FRAME DISTRIBUTED LOADS"
+ Frame=2  LoadPat=DEAD  Type=Force  Dir="Local 2"  Dist1=0  Dist2=1  Val1=-5  Val2=-5
