@@ -20,6 +20,7 @@ import os
 import tempfile
 
 from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,6 +34,14 @@ from src.fem import solve
 from src.checks import check_model, CheckOptions
 
 app = FastAPI(title="空间刚架智能计算 Agent", version="0.4.0")
+
+# 跨域放行：支持前端托管在 Cloudflare Pages / 其他域名时的 API 调用
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), '..', 'web')
 app.mount('/vendor', StaticFiles(directory=os.path.join(WEB_DIR, 'vendor')),
