@@ -21,6 +21,11 @@ spaceframe-ai/
 │   ├── test_s2k.py       # .s2k 解析器往返测试
 │   ├── test_checks.py    # GB50017 校核模块测试
 │   └── test_agent.py     # Agent 全链路测试
+├── app/
+│   └── main.py          # FastAPI Web 后端（分析/上传接口）
+├── web/
+│   ├── index.html       # 前端：Three.js 3D + 对话交互
+│   └── vendor/          # three.js 本地依赖（离线可用）
 └── requirements.txt
 ```
 
@@ -32,6 +37,15 @@ python examples/verify_solver.py   # 有限元内核验证
 python examples/test_s2k.py        # .s2k 解析器测试
 python examples/test_checks.py     # 规范校核测试
 python examples/test_agent.py      # Agent 全链路测试
+
+## Web 界面
+
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 浏览器打开 http://<服务器>:8000
+# 可选：export LLM_API_KEY=... 启用大模型（未配置时自动使用规则解析）
+```
 ```
 
 ## 已验证内容（M1）

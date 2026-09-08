@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>空间刚架智能计算 Agent</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Roboto','PingFang SC','Microsoft YaHei',Arial,sans-serif;
+         background: #F4F3EE; color: #1A1B1C; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 10px 20px; background: #fff; border-bottom: 1px solid #E4E3DD;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .sub { font-size: 12px; color: #6B7280; }
+  .llm-badge { font-size: 11px; padding: 2px 8px; border-radius: 8px; }
+  .llm-on { background: rgba(82,196,26,.15); color: #389e0d; }
+  .llm-off { background: rgba(250,173,20,.15); color: #d48806; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  #viewer { flex: 1; position: relative; background: #fff; }
+  #viewer canvas { display: block; }
+  #viewer .hint { position: absolute; bottom: 12px; left: 12px; font-size: 12px;
+                  color: #9ca3af; background: rgba(255,255,255,.8); padding: 4px 10px;
+                  border-radius: 8px; pointer-events: none; }
+
+  #panel { width: 360px; min-width: 300px; background: #fff; border-left: 1px solid #E4E3DD;
+           display: flex; flex-direction: column; }
+  .chat { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 92%; padding: 9px 12px; border-radius: 12px; font-size: 13px;
+         line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #9BBBF4; color: #fff; }
+  .msg.agent { align-self: flex-start; background: #F4F3EE; border: 1px solid #E4E3DD; }
+  .msg.loading { color: #6B7280; font-size: 12px; }
+
+  .result-box { margin-top: 10px; border-top: 1px dashed #E4E3DD; padding-top: 8px; font-size: 12.5px; }
+  .result-box .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .ok { color: #389e0d; font-weight: 600; }
+  .bad { color: #EA6668; font-weight: 600; }
+
+  .inputbar { border-top: 1px solid #E4E3DD; padding: 10px; display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; border: 1px solid #E4E3DD; border-radius: 10px; padding: 8px 10px;
+             font-size: 13px; resize: none; height: 40px; font-family: inherit; outline: none; }
+  textarea:focus { border-color: #9BBBF4; }
+  .btn { border: none; border-radius: 10px; padding: 8px 14px; font-size: 13px;
+         cursor: pointer; background: #9BBBF4; color: #fff; font-weight: 500; }
+  .btn:hover { opacity: .9; }
+  .btn.ghost { background: #fff; color: #1A1B1C; border: 1px solid #E4E3DD; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #F0EFEA; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #6B7280; font-weight: 500; }
+  td.bad { color: #EA6668; }
+
+  @media (max-width: 760px) {
+    main { flex-direction: column-reverse; }
+    #panel { width: 100%; min-width: 0; max-height: 45vh; border-left: none; border-top: 1px solid #E4E3DD; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>空间刚架智能计算 Agent</h1>
+  <span class="sub">基于 AI 的空间刚架智能计算 Agent 开发（课程项目）</span>
+  <span id="llmBadge" class="llm-badge llm-off">规则模式</span>
+</header>
+
+<main>
+  <div id="viewer" style="position:relative;">
+    <div class="hint">鼠标拖拽旋转 · 滚轮缩放 · 右键平移</div>
+  </div>
+
+  <div id="panel">
+    <div class="chat" id="chat">
+      <div class="msg agent">你好！我是空间刚架智能计算助手。你可以：
+· 用自然语言描述结构，例如：<i>"做一个 8×6×4m 的两层刚架，柱 HW300，梁 HN400，顶部荷载 20kN/m²"</i>
+· 或者上传 SAP2000 导出的 .s2k 模型文件</div>
+    </div>
+    <div class="inputbar">
+      <button class="btn ghost" id="btnUpload" title="上传 .s2k 文件">📂</button>
+      <textarea id="input" placeholder="描述你的空间刚架…（回车发送）"></textarea>
+      <button class="btn" id="btnSend">分析</button>
+    </div>
+  </div>
+</main>
+
+<input type="file" id="fileInput" accept=".s2k,.$2k,.txt" style="display:none">
+
+<script src="./vendor/three.min.js"></script>
+<script src="./vendor/OrbitControls.js"></script>
+
+<script>
+(function() {
+'use strict';
+// ---------------- 3D 场景 ----------------
+const viewer = document.getElementById('viewer');
+  if (typeof THREE === 'undefined') {
+  viewer.innerHTML = '<div style="padding:40px;color:#6B7280;font-size:14px;text-align:center;">3D 引擎加载失败，请检查网络后刷新</div>';
+  return;
+}
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+
+// WebGL 渲染器（带降级：无 GPU 环境自动切 2D 画布）
+let renderer = null;
+try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) {
+  try { renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' }); }
+  catch (e2) { renderer = null; }
+}
+
+let use2D = !renderer;
+let controls = null;
+if (use2D) {
+    const cv = document.createElement('canvas');
+  cv.width = viewer.clientWidth || 800;
+  cv.height = viewer.clientHeight || 600;
+  cv.style.width = '100%'; cv.style.height = '100%';
+  viewer.insertBefore(cv, viewer.firstChild);
+  window.__cv2d = cv;
+} else {
+    viewer.appendChild(renderer.domElement);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+  // 灯光
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(5, 8, 6);
+  scene.add(dirLight);
+
+  // 地面网格
+  const grid = new THREE.GridHelper(10, 10, 0xcccccc, 0xeeeeee);
+  scene.add(grid);
+
+  // 轴
+  scene.add(new THREE.AxesHelper(2));
+}
+
+function fitCamera(box) {
+  const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
+  const r = Math.max(box[3]-box[0], box[4]-box[1], box[5]-box[2], 1) * 1.6;
+  camera.position.set(cx + r*0.8, cy + r*0.7, cz + r);
+  camera.lookAt(cx, cy, cz);
+  if (controls) controls.target.set(cx, cy, cz);
+  if (window.__grid) {
+    window.__grid.position.y = box[1];
+    window.__grid.scale.set(r/5, 1, r/5);
+  }
+}
+
+// ---------------- 渲染模型 ----------------
+let modelGroup = null;
+
+function colorForRatio(r) {
+  const t = Math.min(Math.max(r / 1.5, 0), 1);
+  const c = new THREE.Color();
+  c.lerpColors(new THREE.Color(0x52C41A), new THREE.Color(0xFAAD14), Math.min(t*2, 1));
+  if (t > 0.5) c.lerpColors(new THREE.Color(0xFAAD14), new THREE.Color(0xEA6668), (t-0.5)*2);
+  return c;
+}
+
+function cssColor(r) {
+  // 与 3D 同款的绿->黄->红
+  const t = Math.min(Math.max(r / 1.5, 0), 1);
+  const lerp = (a, b, k) => Math.round(a + (b - a) * k);
+  let R, G, B;
+  if (t <= 0.5) { R = lerp(0x52, 0xFA, t*2); G = lerp(0xC4, 0xAD, t*2); B = lerp(0x1A, 0x14, t*2); }
+  else { const k = (t-0.5)*2; R = lerp(0xFA, 0xEA, k); G = lerp(0xAD, 0x66, k); B = lerp(0x14, 0x68, k); }
+  return 'rgb(' + R + ',' + G + ',' + B + ')';
+}
+
+// 2D 降级渲染：等轴投影画杆件线框（按应力比着色）
+function renderModel2D(data) {
+  const cv = window.__cv2d;
+  if (!cv) return;
+  const W = cv.width, H = cv.height;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const m = data.model;
+  const nodes = new Map(m.nodes.map(n => [n.id, n]));
+  const box = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+  for (const n of m.nodes) {
+    box[0]=Math.min(box[0],n.x); box[1]=Math.min(box[1],n.y); box[2]=Math.min(box[2],n.z);
+    box[3]=Math.max(box[3],n.x); box[4]=Math.max(box[4],n.y); box[5]=Math.max(box[5],n.z);
+  }
+  const cx = (box[0]+box[3])/2, cy = (box[1]+box[4])/2, cz = (box[2]+box[5])/2;
+  const r = Math.max(box[3]-box[0], box[4]-box[1], box[5]-box[2], 1);
+  const s = Math.min(W, H) * 0.75 / r;
+  const disp = m.displacements || {};
+  const scale = m.deformed_scale || 0;
+  const rotY = Math.PI / 6, rotX = -Math.PI / 7;
+  const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+  const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+  function proj(n) {
+    const d = disp[n.id] || [0,0,0];
+    let x = (n.x + d[0]*scale) - cx, y = (n.y + d[1]*scale) - cy, z = (n.z + d[2]*scale) - cz;
+    let x1 = x * cosY + z * sinY;
+    let z1 = -x * sinY + z * cosY;
+    let y1 = y * cosX - z1 * sinX;
+    let z2 = y * sinX + z1 * cosX;
+    return [W/2 + x1 * s, H/2 - y1 * s, z2];
+  }
+  const P = new Map();
+  for (const n of m.nodes) P.set(n.id, proj(n));
+  // 杆件
+  for (const mb of m.members) {
+    const a = P.get(mb.i), b = P.get(mb.j);
+    if (!a || !b) continue;
+    ctx.strokeStyle = cssColor(mb.max_ratio);
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  // 节点
+  for (const n of m.nodes) {
+    const p = P.get(n.id);
+    ctx.fillStyle = '#9BBBF4';
+    ctx.beginPath(); ctx.arc(p[0], p[1], 4, 0, Math.PI*2); ctx.fill();
+  }
+  // 图例
+  ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#6B7280';
+  ctx.fillText('2D 视图（WebGL 不可用时的降级显示）', 12, H - 12);
+  // 最大应力杆件标注
+  const worst = data.result && data.result.worst_member;
+  if (worst) {
+    const mb = m.members.find(x => x.id === worst);
+    if (mb) {
+      const a = P.get(mb.i), b = P.get(mb.j);
+      ctx.fillStyle = '#EA6668';
+      ctx.fillText('最不利杆件 #' + worst + '（应力比 ' + data.result.worst_ratio + '）',
+                   (a[0]+b[0])/2 + 8, (a[1]+b[1])/2 - 8);
+    }
+  }
+}
+
+function renderModel(data) {
+  if (use2D) { renderModel2D(data); return; }
+  if (modelGroup) { scene.remove(modelGroup); }
+  modelGroup = new THREE.Group();
+  const m = data.model;
+  const nodes = new Map(m.nodes.map(n => [n.id, n]));
+  const box = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+  for (const n of m.nodes) {
+    box[0]=Math.min(box[0],n.x); box[1]=Math.min(box[1],n.y); box[2]=Math.min(box[2],n.z);
+    box[3]=Math.max(box[3],n.x); box[4]=Math.max(box[4],n.y); box[5]=Math.max(box[5],n.z);
+  }
+  const L = Math.max(box[3]-box[0], box[5]-box[2], 1);
+
+  const scale = m.deformed_scale || 0;
+  const disp = m.displacements || {};
+
+  // 节点小球
+  for (const n of m.nodes) {
+    const d = disp[n.id] || [0,0,0];
+    const sph = new THREE.Mesh(
+      new THREE.SphereGeometry(L*0.008, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0x9BBBF4 }));
+    sph.position.set(n.x + d[0]*scale, n.y + d[1]*scale, n.z + d[2]*scale);
+    modelGroup.add(sph);
+  }
+
+  // 杆件（圆柱，按应力比着色）
+  for (const mb of m.members) {
+    const a = nodes.get(mb.i), b = nodes.get(mb.j);
+    if (!a || !b) continue;
+    const da = disp[mb.i] || [0,0,0], db = disp[mb.j] || [0,0,0];
+    const ax = a.x+da[0]*scale, ay = a.y+da[1]*scale, az = a.z+da[2]*scale;
+    const bx = b.x+db[0]*scale, by = b.y+db[1]*scale, bz = b.z+db[2]*scale;
+    const dx=bx-ax, dy=by-ay, dz=bz-az;
+    const len = Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if (len < 1e-9) continue;
+    const radius = L * 0.006;
+    const cyl = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, len, 8),
+      new THREE.MeshStandardMaterial({ color: colorForRatio(mb.max_ratio) }));
+    cyl.position.set((ax+bx)/2, (ay+by)/2, (az+bz)/2);
+    cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),
+      new THREE.Vector3(dx,dy,dz).normalize());
+    modelGroup.add(cyl);
+  }
+
+  scene.add(modelGroup);
+  fitCamera(box);
+}
+
+// ---------------- 聊天与结果 ----------------
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+const btnSend = document.getElementById('btnSend');
+const btnUpload = document.getElementById('btnUpload');
+const fileInput = document.getElementById('fileInput');
+
+function addMsg(cls, html) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  div.innerHTML = html;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function resultHtml(data) {
+  const r = data.result;
+  let html = '<div class="result-box">';
+  html += '<div class="row"><span>最大位移</span><b>' + r.max_displacement_mm + ' mm</b></div>';
+  html += '<div class="row"><span>位移比</span><b>' + r.deflection_ratio + '</b></div>';
+  html += '<div class="row"><span>安全判定</span><b class="' + (r.safe ? 'ok' : 'bad') + '">' +
+          (r.safe ? '满足 GB50017 ✓' : '不满足 ✗') + '</b></div>';
+  if (r.worst_member) {
+    html += '<div class="row"><span>最不利杆件</span><b>' + r.worst_member + ' 号（应力比 ' + r.worst_ratio + '）</b></div>';
+  }
+  html += '</div>';
+  html += '<table><tr><th>杆件</th><th>强度比</th><th>稳定比</th><th>λ</th><th>结论</th></tr>';
+  for (const mb of data.model.members.slice(0, 30)) {
+    html += '<tr><td>#' + mb.id + '</td><td>' + mb.stress_ratio + '</td><td>' + mb.stability_ratio +
+            '</td><td>' + mb.slenderness + '</td><td class="' + (mb.ok ? '' : 'bad') + '">' +
+            (mb.ok ? 'OK' : '超限') + '</td></tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+async function analyze(text, file) {
+  const loading = addMsg('loading', '分析中…');
+  try {
+    const fd = new FormData();
+    if (file) { fd.append('file', file); }
+    const url = file ? '/api/upload' : '/api/analyze';
+    const opts = file ? { method: 'POST', body: fd }
+                      : { method: 'POST', headers: {'Content-Type':'application/json'},
+                          body: JSON.stringify({ text: text }) };
+    const resp = await fetch(url, opts);
+    const json = await resp.json();
+    loading.remove();
+    addMsg('agent', json.reply.replace(/\n/g, '<br>'));
+    if (json.data && json.data.model && json.data.model.nodes) {
+      renderModel(json.data);
+      addMsg('agent', resultHtml(json.data));
+    }
+  } catch (e) {
+    loading.remove();
+    addMsg('agent', '分析失败：' + e.message);
+  }
+}
+
+btnSend.addEventListener('click', function() {
+  const t = input.value.trim();
+  if (!t) return;
+  addMsg('user', t);
+  input.value = '';
+  analyze(t, null);
+});
+input.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); btnSend.click(); }
+});
+btnUpload.addEventListener('click', function() { fileInput.click(); });
+fileInput.addEventListener('change', function() {
+  const f = fileInput.files[0];
+  if (!f) return;
+  addMsg('user', '📂 上传模型文件：' + f.name);
+  analyze(null, f);
+  fileInput.value = '';
+});
+
+// LLM 状态
+fetch('/api/health').then(function(r){ return r.json(); }).then(function(j) {
+  const b = document.getElementById('llmBadge');
+  if (j.llm) { b.textContent = 'LLM 已连接'; b.className = 'llm-badge llm-on'; }
+});
+
+// 渲染循环
+function resize() {
+  if (use2D) {
+    const cv = window.__cv2d;
+    if (cv) { cv.width = viewer.clientWidth || 800; cv.height = viewer.clientHeight || 600; }
+    return;
+  }
+  const w = viewer.clientWidth, h = viewer.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+if (!use2D) {
+  (function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+}
+})();
+</script>
+</body>
+</html>
