@@ -11,12 +11,16 @@ spaceframe-ai/
 │   ├── fem.py          # 有限元内核：12×12 单元矩阵、组装、KU=F、杆端内力
 │   ├── s2k_parser.py   # SAP2000 .s2k 文件解析导入
 │   ├── checks.py        # GB50017 规范校核（强度/稳定/长细比/挠度）
+│   ├── sections_db.py   # 常用 H 型钢截面库（GB/T 11263）
+│   ├── templates.py     # 参数化空间刚架生成器
+│   └── agent.py         # LLM Agent（Function Calling + 规则降级）
 │   └── __init__.py
 ├── examples/
 │   ├── verify_solver.py  # 7 组经典算例验证（与解析解对拍）
 │   ├── sample_frame.s2k  # 示例 SAP2000 模型文件
 │   ├── test_s2k.py       # .s2k 解析器往返测试
-│   └── test_checks.py    # GB50017 校核模块测试
+│   ├── test_checks.py    # GB50017 校核模块测试
+│   └── test_agent.py     # Agent 全链路测试
 └── requirements.txt
 ```
 
@@ -27,6 +31,7 @@ pip install -r requirements.txt
 python examples/verify_solver.py   # 有限元内核验证
 python examples/test_s2k.py        # .s2k 解析器测试
 python examples/test_checks.py     # 规范校核测试
+python examples/test_agent.py      # Agent 全链路测试
 ```
 
 ## 已验证内容（M1）
