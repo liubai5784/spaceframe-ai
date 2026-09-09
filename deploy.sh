@@ -18,13 +18,36 @@ LLM_KEY="${LLM_API_KEY:-}"
 echo "==> [1/5] 安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3-venv python3-pip git curl > /dev/null
+apt-get install -y -qq python3-venv python3-pip git curl unzip > /dev/null
 
-echo "==> [2/5] 拉取项目代码"
-if [ -d "$APP_DIR/.git" ]; then
+echo "==> [2/5] 拉取项目代码（已存在则跳过）"
+if [ -d "$APP_DIR/src" ]; then
+  echo "检测到已有代码，跳过拉取（如需更新请手动 git pull）"
+elif [ -d "$APP_DIR/.git" ]; then
   cd "$APP_DIR" && git pull --ff-only
 else
-  git clone --depth 1 "$REPO_URL" "$APP_DIR"
+  # 国内服务器访问 GitHub 不稳定：加大缓冲 + 重试 3 次，仍失败则走镜像
+  git config --global http.postBuffer 524288000
+  fetch_ok=0
+  for i in 1 2 3; do
+    echo "尝试 git clone（第 $i 次）..."
+    if git clone --depth 1 "$REPO_URL" "$APP_DIR" 2>/tmp/git_err.log; then
+      fetch_ok=1; break
+    fi
+    sleep 2
+  done
+  if [ "$fetch_ok" != "1" ]; then
+    echo "git 直连失败，改用镜像下载 zip ..."
+    mkdir -p "$APP_DIR"
+    curl -fsSL --connect-timeout 20 -o /tmp/sf.zip \
+      "https://gh-proxy.com/https://github.com/liubai5784/spaceframe-ai/archive/refs/heads/main.zip" \
+      || curl -fsSL --connect-timeout 20 -o /tmp/sf.zip \
+      "https://codeload.github.com/liubai5784/spaceframe-ai/zip/refs/heads/main" \
+      || { echo "❌ GitHub 直连与镜像均失败，请手动下载后重试"; exit 1; }
+    rm -rf "$APP_DIR"
+    unzip -q /tmp/sf.zip -d /tmp/sf_extract
+    mv /tmp/sf_extract/spaceframe-ai-main "$APP_DIR"
+  fi
 fi
 
 echo "==> [3/5] 创建 Python 环境并安装依赖"
