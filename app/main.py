@@ -19,7 +19,7 @@ import io
 import os
 import tempfile
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -140,7 +140,16 @@ def health():
 @app.post("/api/analyze")
 def analyze(req: AnalyzeRequest):
     agent = SpaceFrameAgent()
-    reply = agent.ask(req.text)
+    try:
+        reply = agent.ask(req.text)
+    except ValueError as e:
+        # 参数解析/截面库不识别等业务错误 -> 返回友好中文提示（而非 500）
+        from src import sections_db
+        avail = '、'.join(sorted(sections_db._H_DIMS.keys()))
+        raise HTTPException(
+            status_code=400,
+            detail=f"{e}。可用的截面：{avail}。示例：柱HW300 梁HN400",
+        )
     return {
         'reply': reply,
         'data': _model_json(agent),

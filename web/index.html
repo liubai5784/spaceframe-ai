@@ -140,13 +140,14 @@ if (use2D) {
 }
 
 function fitCamera(box) {
+  // box 为结构坐标 (x,y,z)，z 是高度；Three.js y-up -> 相机目标换成 (cx, cz, cy)
   const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
   const r = Math.max(box[3]-box[0], box[4]-box[1], box[5]-box[2], 1) * 1.6;
-  camera.position.set(cx + r*0.8, cy + r*0.7, cz + r);
-  camera.lookAt(cx, cy, cz);
-  if (controls) controls.target.set(cx, cy, cz);
+  camera.position.set(cx + r*0.8, cz + r*0.7, cy + r);
+  camera.lookAt(cx, cz, cy);
+  if (controls) controls.target.set(cx, cz, cy);
   if (window.__grid) {
-    window.__grid.position.y = box[1];
+    window.__grid.position.y = box[2];
     window.__grid.scale.set(r/5, 1, r/5);
   }
 }
@@ -196,7 +197,8 @@ function renderModel2D(data) {
   const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
   function proj(n) {
     const d = disp[n.id] || [0,0,0];
-    let x = (n.x + d[0]*scale) - cx, y = (n.y + d[1]*scale) - cy, z = (n.z + d[2]*scale) - cz;
+    // 结构坐标 (x,y,z)，z 为高度 -> 高度走原 y 通道（屏幕垂直），y 走原 z 通道
+    let x = (n.x + d[0]*scale) - cx, y = (n.z + d[2]*scale) - cz, z = (n.y + d[1]*scale) - cy;
     let x1 = x * cosY + z * sinY;
     let z1 = -x * sinY + z * cosY;
     let y1 = y * cosX - z1 * sinX;
@@ -205,13 +207,17 @@ function renderModel2D(data) {
   }
   const P = new Map();
   for (const n of m.nodes) P.set(n.id, proj(n));
-  // 杆件
+  // 杆件（按应力比着色 + 编号）
+  ctx.font = '11px sans-serif';
   for (const mb of m.members) {
     const a = P.get(mb.i), b = P.get(mb.j);
     if (!a || !b) continue;
     ctx.strokeStyle = cssColor(mb.max_ratio);
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    // 杆件标号
+    ctx.fillStyle = mb.ok ? 'rgba(30,30,30,0.75)' : '#c0392b';
+    ctx.fillText('#' + mb.id, (a[0]+b[0])/2 + 4, (a[1]+b[1])/2 - 6);
   }
   // 节点
   for (const n of m.nodes) {
@@ -252,14 +258,40 @@ function renderModel(data) {
   const scale = m.deformed_scale || 0;
   const disp = m.displacements || {};
 
-  // 节点小球
+  // 节点小球（结构坐标 (x,y,z)，z 为高度；Three.js 中 y 轴朝上 -> 交换 y/z）
   for (const n of m.nodes) {
     const d = disp[n.id] || [0,0,0];
     const sph = new THREE.Mesh(
       new THREE.SphereGeometry(L*0.008, 12, 12),
       new THREE.MeshStandardMaterial({ color: 0x9BBBF4 }));
-    sph.position.set(n.x + d[0]*scale, n.y + d[1]*scale, n.z + d[2]*scale);
+    sph.position.set(n.x + d[0]*scale, n.z + d[2]*scale, n.y + d[1]*scale);
     modelGroup.add(sph);
+  }
+
+  // 杆件标号标签（sprite，始终面向相机）
+  function makeLabel(text, color) {
+    const c = document.createElement('canvas');
+    c.width = 160; c.height = 64;
+    const g = c.getContext('2d');
+    g.font = 'bold 42px sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const tw = g.measureText(text).width;
+    g.fillStyle = 'rgba(255,255,255,0.92)';
+    if (typeof g.roundRect === 'function') {
+      g.beginPath();
+      g.roundRect(80 - tw/2 - 10, 8, tw + 20, 48, 10);
+      g.fill();
+    } else {
+      g.fillRect(80 - tw/2 - 10, 8, tw + 20, 48);
+    }
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2; g.stroke();
+    g.fillStyle = color || '#333';
+    g.fillText(text, 80, 32);
+    const tex = new THREE.CanvasTexture(c);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthTest: false, sizeAttenuation: true }));
+    sp.scale.set(L*0.16, L*0.064, 1);
+    return sp;
   }
 
   // 杆件（圆柱，按应力比着色）
@@ -267,8 +299,9 @@ function renderModel(data) {
     const a = nodes.get(mb.i), b = nodes.get(mb.j);
     if (!a || !b) continue;
     const da = disp[mb.i] || [0,0,0], db = disp[mb.j] || [0,0,0];
-    const ax = a.x+da[0]*scale, ay = a.y+da[1]*scale, az = a.z+da[2]*scale;
-    const bx = b.x+db[0]*scale, by = b.y+db[1]*scale, bz = b.z+db[2]*scale;
+    // 结构 (x,y,z) -> Three (x, z, y)
+    const ax = a.x+da[0]*scale, ay = a.z+da[2]*scale, az = a.y+da[1]*scale;
+    const bx = b.x+db[0]*scale, by = b.z+db[2]*scale, bz = b.y+db[1]*scale;
     const dx=bx-ax, dy=by-ay, dz=bz-az;
     const len = Math.sqrt(dx*dx+dy*dy+dz*dz);
     if (len < 1e-9) continue;
@@ -280,6 +313,10 @@ function renderModel(data) {
     cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),
       new THREE.Vector3(dx,dy,dz).normalize());
     modelGroup.add(cyl);
+    // 杆件标号
+    const lb = makeLabel('#' + mb.id, mb.ok ? '#333' : '#c0392b');
+    lb.position.set((ax+bx)/2, (ay+by)/2 + L*0.035, (az+bz)/2);
+    modelGroup.add(lb);
   }
 
   scene.add(modelGroup);
@@ -333,8 +370,12 @@ async function analyze(text, file) {
                       : { method: 'POST', headers: {'Content-Type':'application/json'},
                           body: JSON.stringify({ text: text }) };
     const resp = await fetch(url, opts);
-    const json = await resp.json();
+    const json = await resp.json().catch(() => ({}));
     loading.remove();
+    if (!resp.ok) {
+      addMsg('agent', '⚠️ ' + (json.detail || ('请求失败（' + resp.status + '）')));
+      return;
+    }
     addMsg('agent', json.reply.replace(/\n/g, '<br>'));
     if (json.data && json.data.model && json.data.model.nodes) {
       renderModel(json.data);
