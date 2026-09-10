@@ -240,6 +240,41 @@ function renderModel2D(data) {
                    (a[0]+b[0])/2 + 8, (a[1]+b[1])/2 - 8);
     }
   }
+  window.__P2D = P;
+  window.__lastData = data;
+}
+
+// 2D：点击 -> 找最近杆件
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx-ax, dy = by-ay;
+  const L2 = dx*dx + dy*dy;
+  let t = L2 > 0 ? ((px-ax)*dx + (py-ay)*dy)/L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+}
+if (use2D) {
+  window.__cv2d.addEventListener('click', function(ev) {
+    const P = window.__P2D, data = window.__lastData;
+    if (!P || !data) return;
+    const rect = window.__cv2d.getBoundingClientRect();
+    const kx = window.__cv2d.width / rect.width, ky = window.__cv2d.height / rect.height;
+    const px = (ev.clientX - rect.left) * kx, py = (ev.clientY - rect.top) * ky;
+    let best = null, bestD = 12;
+    for (const mb of data.model.members) {
+      const a = P.get(mb.i), b = P.get(mb.j);
+      if (!a || !b) continue;
+      const d = pointSegDist(px, py, a[0], a[1], b[0], b[1]);
+      if (d < bestD) { bestD = d; best = mb.id; }
+    }
+    if (best) {
+      showMemberDetail(best, ev.clientX, ev.clientY);
+      const ctx = window.__cv2d.getContext('2d');
+      const mb = data.model.members.find(x => x.id === best);
+      const a = P.get(mb.i), b = P.get(mb.j);
+      ctx.strokeStyle = 'rgba(33,150,243,.9)'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+    } else hideDetail();
+  });
 }
 
 function renderModel(data) {
@@ -312,15 +347,98 @@ function renderModel(data) {
     cyl.position.set((ax+bx)/2, (ay+by)/2, (az+bz)/2);
     cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),
       new THREE.Vector3(dx,dy,dz).normalize());
+    cyl.userData.mid = mb.id;   // 点击识别用
     modelGroup.add(cyl);
     // 杆件标号
     const lb = makeLabel('#' + mb.id, mb.ok ? '#333' : '#c0392b');
     lb.position.set((ax+bx)/2, (ay+by)/2 + L*0.035, (az+bz)/2);
+    lb.userData.mid = mb.id;   // 点标签也能选中
     modelGroup.add(lb);
   }
 
+  window.__lastData = data;
   scene.add(modelGroup);
   fitCamera(box);
+}
+
+// ---------------- 点击杆件查看详情 ----------------
+const detailBox = document.createElement('div');
+detailBox.style.cssText =
+  'position:absolute;display:none;min-width:210px;max-width:260px;background:#fff;' +
+  'border:1px solid #d9d9d9;border-radius:12px;padding:10px 12px;font-size:12.5px;' +
+  'box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:20;pointer-events:auto;line-height:1.5;';
+viewer.appendChild(detailBox);
+
+function showMemberDetail(mid, cx, cy) {
+  const data = window.__lastData;
+  if (!data) return;
+  const mb = data.model.members.find(x => x.id === mid);
+  if (!mb) return;
+  const bad = !mb.ok;
+  let h = '<div style="font-size:13.5px;font-weight:600;margin-bottom:6px;color:' +
+          (bad ? '#c0392b' : '#1A1B1C') + '">杆件 #' + mb.id +
+          (bad ? '（超限）' : '（合格）') + '</div>';
+  const rows = [
+    ['连接节点', mb.i + ' → ' + mb.j],
+    ['轴力 N', mb.N_kN + ' kN'],
+    ['弯矩 Mz', mb.Mz_kNm + ' kN·m'],
+    ['强度应力比', mb.stress_ratio],
+    ['稳定应力比', mb.stability_ratio],
+    ['长细比 λ', mb.slenderness],
+    ['控制应力比', mb.max_ratio],
+  ];
+  for (const r of rows) {
+    h += '<div style="display:flex;justify-content:space-between;gap:14px;padding:1.5px 0;">' +
+         '<span style="color:#6B7280;">' + r[0] + '</span><b>' + r[1] + '</b></div>';
+  }
+  h += '<div style="margin-top:6px;color:#9ca3af;font-size:11px;">点击空白处关闭</div>';
+  detailBox.innerHTML = h;
+  detailBox.style.display = 'block';
+  const vr = viewer.getBoundingClientRect();
+  let x = cx - vr.left + 14, y = cy - vr.top + 14;
+  const dw = detailBox.offsetWidth, dh = detailBox.offsetHeight;
+  if (x + dw > vr.width - 8) x = cx - vr.left - dw - 10;
+  if (y + dh > vr.height - 8) y = vr.height - dh - 8;
+  detailBox.style.left = Math.max(8, x) + 'px';
+  detailBox.style.top = Math.max(8, y) + 'px';
+}
+function hideDetail() { detailBox.style.display = 'none'; }
+
+// 3D：射线检测点击
+let selectedObj = null;
+function clearHighlight3D() {
+  if (selectedObj && selectedObj.material) {
+    selectedObj.material.emissive = new THREE.Color(0x000000);
+    selectedObj = null;
+  }
+}
+function highlight3D(mid) {
+  clearHighlight3D();
+  if (!modelGroup) return;
+  modelGroup.traverse(function(o) {
+    if (o.isMesh && o.userData && o.userData.mid === mid) {
+      o.material.emissive = new THREE.Color(0x2196f3);
+      o.material.emissiveIntensity = 0.55;
+      selectedObj = o;
+    }
+  });
+}
+if (!use2D) {
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  renderer.domElement.addEventListener('click', function(ev) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = modelGroup ? raycaster.intersectObjects(modelGroup.children, false) : [];
+    let mid = null;
+    for (const hit of hits) {
+      if (hit.object.userData && hit.object.userData.mid) { mid = hit.object.userData.mid; break; }
+    }
+    if (mid) { showMemberDetail(mid, ev.clientX, ev.clientY); highlight3D(mid); }
+    else { hideDetail(); clearHighlight3D(); }
+  });
 }
 
 // ---------------- 聊天与结果 ----------------
