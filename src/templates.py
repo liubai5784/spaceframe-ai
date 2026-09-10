@@ -113,3 +113,94 @@ def node_xy_id(model: FrameModel, nid: int) -> Tuple[int, int, int]:
     """反查节点所在 (iz, ix, iy)（用于可视化/结果定位，仅适用于规则网格）。"""
     n = model.nodes[nid]
     return (round(n.z), round(n.x), round(n.y))
+
+
+# ============================================================
+# 空间桁架桥（下承式简支桁架桥）
+# ============================================================
+
+@dataclass
+class TrussBridgeParams:
+    L: float = 24.0            # 桥长 m
+    W: float = 5.0             # 桥宽 m
+    H: float = 3.0             # 桥高（桁高）m
+    n_panels: int = 6          # 节间数（沿桥长）
+    chord_section: str = 'HW200'   # 弦杆截面
+    web_section: str = 'HW150'     # 腹杆/竖杆/横撑截面
+    material: str = 'STEEL'
+    E: float = 2.06e11
+    load_kn_m2: float = 0.0    # 桥面均布荷载 kN/m²
+    steel_grade: str = 'Q355'
+
+
+def build_truss_bridge(p: TrussBridgeParams) -> FrameModel:
+    """生成下承式空间简支桁架桥（用刚架单元等效，荷载在节点上，杆件以轴力为主）。"""
+    m = FrameModel()
+    m.add_material(p.material, E=p.E, nu=0.3, density=7850.0)
+
+    chord = sections_db.section_properties(p.chord_section)
+    web = sections_db.section_properties(p.web_section)
+    if chord is None:
+        raise ValueError(f"未知弦杆截面: {p.chord_section}")
+    if web is None:
+        raise ValueError(f"未知腹杆截面: {p.web_section}")
+    for s in (chord, web):
+        m.add_section(s['name'], s['A'], s['Iy'], s['Iz'],
+                      s['J'], s['Wy'], s['Wz'])
+
+    n = max(int(p.n_panels), 1)
+    dx = p.L / n
+    # ---- 节点：每截面 4 个（下左/下右/上左/上右） ----
+    def nid(i, k):
+        return 4 * i + k            # k: 1下左 2下右 3上左 4上右
+    for i in range(n + 1):
+        x = i * dx
+        m.nodes[nid(i, 1)] = Node(nid(i, 1), x, -p.W / 2, 0.0)
+        m.nodes[nid(i, 2)] = Node(nid(i, 2), x,  p.W / 2, 0.0)
+        m.nodes[nid(i, 3)] = Node(nid(i, 3), x, -p.W / 2, p.H)
+        m.nodes[nid(i, 4)] = Node(nid(i, 4), x,  p.W / 2, p.H)
+
+    def add(a, b, sec):
+        m.add_member(a, b, sec, p.material)
+
+    for i in range(n):
+        # 上下弦杆（弦杆截面）
+        add(nid(i, 1), nid(i + 1, 1), chord['name'])
+        add(nid(i, 2), nid(i + 1, 2), chord['name'])
+        add(nid(i, 3), nid(i + 1, 3), chord['name'])
+        add(nid(i, 4), nid(i + 1, 4), chord['name'])
+        # 斜腹杆（按剪力方向跨中对称布置，使斜杆受拉 = Pratt 式）
+        if i < (n - 1) / 2:
+            add(nid(i, 3), nid(i + 1, 1), web['name'])   # 左半：\ 方向
+            add(nid(i, 4), nid(i + 1, 2), web['name'])
+        else:
+            add(nid(i, 1), nid(i + 1, 3), web['name'])   # 右半：/ 方向
+            add(nid(i, 2), nid(i + 1, 4), web['name'])
+        # 平纵联斜杆（顶/底各一根，增强空间整体性；用弦杆截面保证支撑刚度）
+        add(nid(i, 1), nid(i + 1, 2), chord['name'])
+        add(nid(i, 3), nid(i + 1, 4), chord['name'])
+
+    for i in range(n + 1):
+        # 竖杆
+        add(nid(i, 1), nid(i, 3), web['name'])
+        add(nid(i, 2), nid(i, 4), web['name'])
+        # 横向支撑（下/上横杆，弦杆截面）
+        add(nid(i, 1), nid(i, 2), chord['name'])
+        add(nid(i, 3), nid(i, 4), chord['name'])
+
+    # ---- 简支支座：左端固定铰，右端活动铰（桁架节点释放转动） ----
+    m.add_support(nid(0, 1), (True, True, True, False, False, False))
+    m.add_support(nid(0, 2), (True, True, True, False, False, False))
+    m.add_support(nid(n, 1), (False, True, True, False, False, False))
+    m.add_support(nid(n, 2), (False, True, True, False, False, False))
+
+    # ---- 桥面荷载（下承式 -> 下弦节点，按分担面积） ----
+    if p.load_kn_m2 > 0:
+        w = p.load_kn_m2 * 1e3
+        for i in range(n + 1):
+            ax = dx / 2.0 if (i == 0 or i == n) else dx
+            fz = -w * ax * (p.W / 2.0)     # 每侧分担一半桥宽
+            m.add_nodal_load(nid(i, 1), fz=fz)
+            m.add_nodal_load(nid(i, 2), fz=fz)
+
+    return m

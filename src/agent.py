@@ -31,7 +31,8 @@ from typing import Any, Callable, Dict, List, Optional
 from .model import FrameModel
 from .fem import solve, AnalysisResult
 from .checks import check_model, CheckOptions, CheckReport
-from .templates import FrameParams, build_frame
+from .templates import (FrameParams, build_frame,
+                        TrussBridgeParams, build_truss_bridge)
 from . import sections_db
 
 
@@ -137,6 +138,56 @@ def parse_params_rules(text: str) -> FrameParams:
     return p
 
 
+def parse_bridge_rules(text: str) -> TrussBridgeParams:
+    """从中文自然语言提取桁架桥参数（正则规则解析）。
+
+    支持：桥长/桥宽/桥高/节间数/弦杆腹杆截面/桥面荷载/钢材。
+    """
+    p = TrussBridgeParams()
+    s = text.strip()
+
+    # 桥长："长24m" 或 "24m长"（优先带"长"字的）
+    m = re.search(r'长\s*([\d.]+)\s*m', s) or re.search(r'([\d.]+)\s*m\s*长', s)
+    if m:
+        p.L = float(m.group(1))
+    # 桥宽
+    m = re.search(r'宽\s*([\d.]+)\s*m', s)
+    if m:
+        p.W = float(m.group(1))
+    # 桥高/桁高
+    m = re.search(r'(?:桥高|桁高|高)\s*([\d.]+)\s*m', s)
+    if m:
+        p.H = float(m.group(1))
+    # 节间数（支持中文数字）
+    _CN = {'一':1,'两':2,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9}
+    m = re.search(r'([0-9两一二三四五六七八九])\s*个?\s*节间', s)
+    if m:
+        t = m.group(1)
+        p.n_panels = int(t) if t.isdigit() else _CN[t]
+    # 弦杆 / 腹杆截面
+    m = re.search(r'弦杆[^，。,;；\s]*?[Hh]?(\d{3})', s)
+    if m:
+        p.chord_section = sections_db.resolve(f"H{m.group(1)}")
+    m = re.search(r'腹杆[^，。,;；\s]*?[Hh]?(\d{3})', s)
+    if m:
+        p.web_section = sections_db.resolve(f"H{m.group(1)}")
+    # 未区分弦腹杆时，统一截面（"HW200"直接出现）
+    if not re.search(r'弦杆|腹杆', s):
+        m = re.search(r'\b(H[WwMmNn]?\d{3})\b', s)
+        if m:
+            r = sections_db.resolve(m.group(1))
+            p.chord_section = p.web_section = r
+    # 桥面荷载
+    m = re.search(r'([\d.]+)\s*(?:kN|千牛)[/／]?m²?', s)
+    if m:
+        p.load_kn_m2 = abs(float(m.group(1)))
+    # 钢材
+    m = re.search(r'[Qq](\d{3})', s)
+    if m:
+        p.steel_grade = f"Q{m.group(1)}"
+    return p
+
+
 # ---------------------------------------------------------------------------
 # 3. Agent 主体
 # ---------------------------------------------------------------------------
@@ -232,15 +283,140 @@ class SpaceFrameAgent:
     # ---------------- 主流程 ----------------
     def ask(self, user_text: str) -> str:
         """处理用户自然语言请求，返回 Agent 的最终回复。"""
+        # 桁架桥分支
+        if ('桁架桥' in user_text or '桁架' in user_text and '桥' in user_text
+                or 'truss' in user_text.lower()):
+            return self._ask_bridge(user_text)
+
         # 方案 A：LLM Function Calling
         if self.llm.available:
             reply = self._ask_with_llm(user_text)
             if reply:
                 return reply
-            print("[Agent] LLM 链路异常，使用规则解析兜底")
+            print("[Agent] LLM 链路异常，规则解析兜底")
 
         # 方案 B：规则解析（无 Key 或 LLM 失败）
         return self._ask_with_rules(user_text)
+
+    # ---------------- 桁架桥流程 ----------------
+    BRIDGE_TOOLS = [{
+        'type': 'function',
+        'function': {
+            'name': 'build_truss_bridge',
+            'description': '根据用户描述构建下承式空间简支桁架桥并完成有限元分析与规范校核',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'L': {'type': 'number', 'description': '桥长(m)'},
+                    'W': {'type': 'number', 'description': '桥宽(m)'},
+                    'H': {'type': 'number', 'description': '桥高/桁高(m)'},
+                    'n_panels': {'type': 'integer', 'description': '节间数'},
+                    'chord_section': {'type': 'string',
+                                      'description': '弦杆截面（如HW200）'},
+                    'web_section': {'type': 'string',
+                                    'description': '腹杆截面（如HW150）'},
+                    'load_kn_m2': {'type': 'number',
+                                   'description': '桥面均布荷载(kN/m²)'},
+                    'steel_grade': {'type': 'string',
+                                    'description': '钢材牌号'},
+                },
+                'required': [],
+            },
+        },
+    }]
+
+    BRIDGE_SYSTEM_PROMPT = (
+        "你是桁架桥结构智能计算助手。用户描述不完整时合理补全"
+        "（默认桥长24m、桥宽5m、桁高3m、6个节间、弦杆HW200、腹杆HW150、Q355），"
+        "然后调用 build_truss_bridge 工具完成分析。"
+        "分析完成后用中文解释：是否满足 GB50017-2017、最大位移（下挠）、"
+        "最危险杆件（弦杆/腹杆）及其应力比，并给出直观结论。"
+    )
+
+    def _execute_bridge(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """执行 build_truss_bridge：建模 -> 求解 -> 校核。"""
+        p = TrussBridgeParams(**{k: v for k, v in args.items()
+                                 if k in TrussBridgeParams.__dataclass_fields__})
+        model = build_truss_bridge(p)
+        result = solve(model)
+        # 桁架桥挠度参考跨度 = 桥跨（而非最长杆件）
+        opts = CheckOptions(steel_grade=p.steel_grade, ref_span=p.L)
+        report = check_model(model, result, opts)
+        self.last_model, self.last_result, self.last_report = model, result, report
+        members = []
+        for mid, r in sorted(report.results.items()):
+            members.append({
+                'id': mid,
+                'stress_ratio': round(r.stress_ratio, 3),
+                'stability_ratio': round(r.stability_ratio, 3),
+                'slenderness': round(r.slenderness, 1),
+                'ok': r.ok,
+            })
+        return {
+            'model': {
+                'nodes': model.num_nodes, 'members': model.num_members,
+                'span': round(p.L, 2),
+            },
+            'max_displacement_mm': round(report.max_displacement * 1000, 2),
+            'deflection_ratio': round(report.max_deflection_ratio, 3),
+            'safe': report.safe,
+            'worst_member': report.worst_member,
+            'worst_ratio': round(report.results[report.worst_member].max_ratio, 3)
+            if report.worst_member else None,
+            'members': members,
+        }
+
+    def _ask_bridge(self, user_text: str) -> str:
+        """桁架桥：LLM 解析优先，规则解析兜底。"""
+        if self.llm.available:
+            messages = [
+                {'role': 'system', 'content': self.BRIDGE_SYSTEM_PROMPT},
+                {'role': 'user', 'content': user_text},
+            ]
+            resp = self.llm.chat(messages, tools=self.BRIDGE_TOOLS)
+            if resp:
+                try:
+                    msg = resp['choices'][0]['message']
+                    if msg.get('tool_calls'):
+                        args = json.loads(
+                            msg['tool_calls'][0]['function']['arguments'])
+                        tool_result = self._execute_bridge(args)
+                        messages.append(msg)
+                        messages.append({
+                            'role': 'tool',
+                            'tool_call_id': msg['tool_calls'][0]['id'],
+                            'content': json.dumps(tool_result, ensure_ascii=False),
+                        })
+                        final = self.llm.chat(messages, temperature=0.4)
+                        if final:
+                            return final['choices'][0]['message']['content']
+                        return self._format_bridge_report(tool_result)
+                except (KeyError, IndexError, json.JSONDecodeError):
+                    pass
+        # 规则解析兜底
+        params = parse_bridge_rules(user_text)
+        tool_result = self._execute_bridge(vars(params))
+        return self._format_bridge_report(tool_result)
+
+    def _format_bridge_report(self, t: Dict[str, Any]) -> str:
+        """桁架桥中文报告（无 LLM 时）。"""
+        m = t['model']
+        lines = [
+            "已按你的描述完成空间桁架桥分析：",
+            f"· 桥跨：{m['span']} m，{m['nodes']} 个节点，{m['members']} 根杆件",
+            f"· 最大下挠：{t['max_displacement_mm']} mm"
+            f"（挠跨比 {t['deflection_ratio']:.2f}）",
+        ]
+        lines.append("· 规范校核：全部构件满足 GB50017-2017，结构安全 ✓"
+                     if t['safe'] else
+                     f"· 规范校核：不满足，最不利杆件 {t['worst_member']} 号，"
+                     f"应力比 {t['worst_ratio']}（超限）")
+        for mb in t['members'][:10]:
+            lines.append(
+                f"    - 杆件{mb['id']}: 强度 {mb['stress_ratio']:.2f} / "
+                f"稳定 {mb['stability_ratio']:.2f} / λ {mb['slenderness']:.0f} "
+                f"{'OK' if mb['ok'] else '超限'}")
+        return "\n".join(lines)
 
     def _ask_with_llm(self, user_text: str) -> Optional[str]:
         messages = [

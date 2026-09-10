@@ -229,9 +229,9 @@ function renderModel2D(data) {
   ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
   ctx.fillStyle = '#6B7280';
   ctx.fillText('2D 视图（WebGL 不可用时的降级显示）', 12, H - 12);
-  // 最大应力杆件标注
+  // 最大应力杆件标注（确有受力时才显示）
   const worst = data.result && data.result.worst_member;
-  if (worst) {
+  if (worst && data.result.worst_ratio > 0.001) {
     const mb = m.members.find(x => x.id === worst);
     if (mb) {
       const a = P.get(mb.i), b = P.get(mb.j);

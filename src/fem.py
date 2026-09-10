@@ -344,7 +344,11 @@ def member_extreme_forces(model: FrameModel, member,
     forces = np.array([member_section_forces(model, member, f_local, x)
                        for x in xs])
     names = ['N', 'Vy', 'Vz', 'Mx', 'My', 'Mz']
-    return {n: float(np.max(np.abs(forces[:, i]))) for i, n in enumerate(names)}
+    res = {n: float(np.max(np.abs(forces[:, i]))) for i, n in enumerate(names)}
+    # 带符号轴力（拉为正、压为负）：取绝对值最大采样点处的原值
+    k = int(np.argmax(np.abs(forces[:, 0])))
+    res['N_signed'] = float(forces[k, 0])
+    return res
 
 
 def member_internal_forces(f_local: np.ndarray) -> dict:

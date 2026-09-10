@@ -175,7 +175,9 @@ def check_model(model: FrameModel, result: AnalysisResult,
         L = model.member_length(mid)
 
         forces = member_extreme_forces(model, mem, result.member_forces[mid])
-        N = forces['N']                    # 绝对值
+        N = forces['N']                    # 绝对值（强度计算用）
+        Ns = forces.get('N_signed', N)     # 带符号：拉为正、压为负
+        is_comp = Ns < -1e-6               # 是否受压
         Mx = forces['Mx']
         My = forces['My']
         Mz = forces['Mz']
@@ -184,7 +186,7 @@ def check_model(model: FrameModel, result: AnalysisResult,
         # ---------------- 长细比 ----------------
         i_min = math.sqrt(min(sec.Iy, sec.Iz) / sec.A) if sec.A > 0 else 1e-12
         lam = options.effective_length_factor * L / i_min
-        sl_limit = (options.slenderness_limit_comp if N > 1e-6
+        sl_limit = (options.slenderness_limit_comp if is_comp
                     else options.slenderness_limit_tens)
         sl_ok = lam <= sl_limit
 
@@ -196,7 +198,7 @@ def check_model(model: FrameModel, result: AnalysisResult,
 
         # ---------------- 整体稳定（压弯构件，8.2.1 / 8.2.2） ----------------
         stability_ratio = 0.0
-        if N > 1e-6:                       # 有轴力才需要稳定校核
+        if is_comp:                       # 仅受压构件需要稳定校核
             E = mat.E
             lam_y = options.effective_length_factor * L / math.sqrt(sec.Iy / sec.A)
             lam_z = options.effective_length_factor * L / math.sqrt(sec.Iz / sec.A)
