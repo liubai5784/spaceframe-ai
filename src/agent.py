@@ -33,6 +33,7 @@ from .fem import solve, AnalysisResult
 from .checks import check_model, CheckOptions, CheckReport
 from .templates import (FrameParams, build_frame,
                         TrussBridgeParams, build_truss_bridge)
+from .custom_model import build_custom_model, parse_custom_text, spec_summary
 from . import sections_db
 
 
@@ -205,7 +206,7 @@ class SpaceFrameAgent:
         'type': 'function',
         'function': {
             'name': 'build_space_frame',
-            'description': '根据用户描述构建空间刚架模型并完成有限元分析与规范校核',
+            'description': '根据用户描述构建规则矩形网格空间刚架（等跨等层高）并完成有限元分析与规范校核',
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -229,12 +230,106 @@ class SpaceFrameAgent:
         },
     }]
 
+    # 通用任意构型工具：节点/杆件/支座/荷载自由定义
+    CUSTOM_TOOL = {
+        'type': 'function',
+        'function': {
+            'name': 'build_custom_model',
+            'description': (
+                '根据用户描述构建【任意构型】的空间刚架（不限于规则框架/桁架桥），'
+                '并完成有限元分析与规范校核。'
+                '当用户描述的结构无法用 build_space_frame 的参数化规则网格表达时'
+                '（如塔架、悬挑、不规则平面、空间桁架、构筑物等），必须使用本工具。'
+                '你需要把结构离散为节点（坐标）与杆件（连接关系），单位一律用 SI：'
+                '坐标 m、力 N、弯矩 N·m、均布荷载 N/m。'),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'nodes': {
+                        'type': 'array',
+                        'description': '节点列表：[{"id":1,"x":0,"y":0,"z":0},...]。'
+                                       'id 可省略（自动编号）；z 为高度方向。',
+                        'items': {'type': 'object',
+                                  'properties': {
+                                      'id': {'type': 'integer'},
+                                      'x': {'type': 'number'},
+                                      'y': {'type': 'number'},
+                                      'z': {'type': 'number'}},
+                                  'required': ['x', 'y', 'z']}},
+                    'members': {
+                        'type': 'array',
+                        'description': '杆件列表：[{"i":1,"j":2,"section":"HW200"},...]。'
+                                       'section 为截面库名（HW150/HW200/HW250/HW300/'
+                                       'HM294/HM340/HM440/HN250/HN300/HN350/HN400/HN500/HN600）。',
+                        'items': {'type': 'object',
+                                  'properties': {
+                                      'i': {'type': 'integer'},
+                                      'j': {'type': 'integer'},
+                                      'section': {'type': 'string'}},
+                                  'required': ['i', 'j', 'section']}},
+                    'supports': {
+                        'type': 'array',
+                        'description': '支座列表（可选）：[{"node":1,"fix":'
+                                       '[true,true,true,true,true,true]}]。'
+                                       'fix 为 6 个自由度(u,v,w,rx,ry,rz)是否固定；'
+                                       '省略 fix 表示全固定。至少需要一个支座。',
+                        'items': {'type': 'object',
+                                  'properties': {
+                                      'node': {'type': 'integer'},
+                                      'fix': {'type': 'array',
+                                              'items': {'type': 'boolean'}}},
+                                  'required': ['node']}},
+                    'nodal_loads': {
+                        'type': 'array',
+                        'description': '节点荷载（可选）：[{"node":2,"fx":0,"fy":0,'
+                                       '"fz":-100000}]，力 N、弯矩 N·m，向下为负。',
+                        'items': {'type': 'object',
+                                  'properties': {
+                                      'node': {'type': 'integer'},
+                                      'fx': {'type': 'number'}, 'fy': {'type': 'number'},
+                                      'fz': {'type': 'number'}, 'mx': {'type': 'number'},
+                                      'my': {'type': 'number'}, 'mz': {'type': 'number'}},
+                                  'required': ['node']}},
+                    'member_loads': {
+                        'type': 'array',
+                        'description': '杆件均布荷载（可选，局部坐标 N/m）：'
+                                       '[{"member":1,"wz":-5000}]，wz 为沿杆件局部 z 方向。',
+                        'items': {'type': 'object',
+                                  'properties': {
+                                      'member': {'type': 'integer'},
+                                      'wx': {'type': 'number'}, 'wy': {'type': 'number'},
+                                      'wz': {'type': 'number'}},
+                                  'required': ['member']}},
+                    'sections': {
+                        'type': 'object',
+                        'description': '自定义截面（可选，SI 单位）：'
+                                       '{"SEC1":{"A":..,"Iy":..,"Iz":..,"J":..,"Wy":..,"Wz":..}}。'
+                                       'A 截面积 m²，Iy/Iz 惯性矩 m⁴，J 扭转常数 m⁴，'
+                                       'Wy/Wz 截面模量 m³。',
+                        'additionalProperties': {'type': 'object'}},
+                    'steel_grade': {
+                        'type': 'string',
+                        'description': '钢材牌号（Q235/Q355/Q390/Q420，默认 Q355）'},
+                    'ref_span': {
+                        'type': 'number',
+                        'description': '挠度参考跨度 m（可选；缺省取最长杆件）'},
+                },
+                'required': ['nodes', 'members'],
+            },
+        },
+    }
+
     SYSTEM_PROMPT = (
-        "你是空间刚架结构智能计算助手。用户的描述可能不完整，请合理推断并补全参数"
-        "（尺寸默认 6×4×3m、柱 HW200、梁 HN300、单层、Q355），"
-        "然后调用 build_space_frame 工具完成分析。"
+        "你是空间刚架结构智能计算助手。根据用户描述选择建模工具：\n"
+        "1) 规则矩形网格刚架（等跨等层高的框架）→ build_space_frame，"
+        "参数不完整时合理补全（默认 6×4×3m、柱 HW200、梁 HN300、单层、Q355）；\n"
+        "2) 桁架桥 → build_truss_bridge（桥长24m、桥宽5m、桁高3m、6个节间、"
+        "弦杆HW200、腹杆HW150、Q355）；\n"
+        "3) 其他任意构型（塔架、悬挑、不规则平面、任意空间结构）→ build_custom_model，"
+        "把结构离散为节点坐标与杆件连接，单位 SI。\n"
         "分析完成后，请用中文向用户解释：结构是否满足 GB50017-2017 要求、"
         "最大位移、最危险构件及其应力比，并给出直观结论。"
+        "如果工具调用返回 error，请根据错误信息修正参数后重新调用。"
     )
 
     def __init__(self, llm: Optional[LLMClient] = None,
@@ -280,23 +375,97 @@ class SpaceFrameAgent:
             'members': members,
         }
 
+    def _execute_custom(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """执行 build_custom_model：任意构型建模 -> 求解 -> 校核。
+
+        支持三种入参形态：
+        - args 本身即 spec（LLM 直接输出模型对象）
+        - args['spec'] 为 spec
+        - args['spec'] 为 JSON 字符串
+        """
+        spec = args.get('spec', args)
+        if isinstance(spec, str):
+            spec = json.loads(spec)
+        if not isinstance(spec, dict) or 'nodes' not in spec:
+            raise ValueError(
+                "build_custom_model 参数应为模型描述对象（含 nodes/members），"
+                "如 {\"nodes\":[{\"id\":1,\"x\":0,\"y\":0,\"z\":0},...],"
+                "\"members\":[{\"i\":1,\"j\":2,\"section\":\"HW200\"},...]}")
+        model = build_custom_model(spec)
+        result = solve(model)
+        steel = spec.get('steel_grade', 'Q355')
+        opts = CheckOptions(steel_grade=steel, ref_span=spec.get('ref_span'))
+        report = check_model(model, result, opts)
+        self.last_model, self.last_result, self.last_report = model, result, report
+
+        members = []
+        for mid, r in sorted(report.results.items()):
+            members.append({
+                'id': mid,
+                'stress_ratio': round(r.stress_ratio, 3),
+                'stability_ratio': round(r.stability_ratio, 3),
+                'slenderness': round(r.slenderness, 1),
+                'ok': r.ok,
+            })
+        return {
+            'model': {
+                'nodes': model.num_nodes, 'members': model.num_members,
+                'span': round(report.span, 2),
+                'summary': spec_summary(spec),
+            },
+            'max_displacement_mm': round(report.max_displacement * 1000, 2),
+            'deflection_ratio': round(report.max_deflection_ratio, 3),
+            'safe': report.safe,
+            'worst_member': report.worst_member,
+            'worst_ratio': round(report.results[report.worst_member].max_ratio, 3)
+            if report.worst_member else None,
+            'members': members,
+        }
+
     # ---------------- 主流程 ----------------
     def ask(self, user_text: str) -> str:
-        """处理用户自然语言请求，返回 Agent 的最终回复。"""
+        """处理用户自然语言请求，返回 Agent 的最终回复。
+
+        路径：桁架桥关键词 -> LLM(三工具) -> 规则刚架 -> 自由文本建模
+        """
+        self._tool_result_cache = {}
         # 桁架桥分支
         if ('桁架桥' in user_text or '桁架' in user_text and '桥' in user_text
                 or 'truss' in user_text.lower()):
             return self._ask_bridge(user_text)
 
-        # 方案 A：LLM Function Calling
+        # 方案 A：LLM Function Calling（含 build_custom_model 任意构型）
         if self.llm.available:
             reply = self._ask_with_llm(user_text)
             if reply:
                 return reply
             print("[Agent] LLM 链路异常，规则解析兜底")
 
-        # 方案 B：规则解析（无 Key 或 LLM 失败）
-        return self._ask_with_rules(user_text)
+        # 方案 B：规则解析兜底（无 Key 或 LLM 失败）
+        # B2 优先：文本带"节点:/杆件:"分节标记 -> 自由文本建模
+        looks_like_table = (('节点:' in user_text or '节点：' in user_text)
+                            and ('杆件' in user_text or '单元' in user_text))
+        if looks_like_table:
+            try:
+                spec = parse_custom_text(user_text)
+                tool_result = self._execute_custom({'spec': spec})
+                return self._format_tool_report(tool_result)
+            except ValueError as e:
+                return (f"未能解析你提供的节点/杆件表：{e}\n"
+                        f"格式示例：\n节点:\n1 0 0 0\n2 6 0 0\n杆件:\n1-2 HW200\n"
+                        f"支座:\n1 固定\n荷载:\n2 FZ=-20000")
+        # B1: 规则刚架模板
+        try:
+            params = parse_params_rules(user_text)
+            tool_result = self._execute_build(vars(params))
+            return self._format_tool_report(tool_result)
+        except ValueError:
+            pass
+        return (f"未能理解你的描述。你可以：\n"
+                f"· 描述规则刚架，如\u201c做一个 8×6×4m 的两层刚架，柱 HW300，梁 HN400，顶部荷载 20kN/m²\u201d\n"
+                f"· 描述桁架桥，如\u201c做一座 24m 跨的桁架桥\u201d\n"
+                f"· 描述任意构型，如\u201c一个 6m 高的四角锥塔架，底部四角固定，顶部受 200kN 竖向荷载\u201d\n"
+                f"· 或直接在\u2018自由建模\u2019面板粘贴节点/杆件表")
 
     # ---------------- 桁架桥流程 ----------------
     BRIDGE_TOOLS = [{
@@ -410,7 +579,7 @@ class SpaceFrameAgent:
         lines.append("· 规范校核：全部构件满足 GB50017-2017，结构安全 ✓"
                      if t['safe'] else
                      f"· 规范校核：不满足，最不利杆件 {t['worst_member']} 号，"
-                     f"应力比 {t['worst_ratio']}（超限）")
+                     f"最大控制指标 {t['worst_ratio']}（超限）")
         for mb in t['members'][:10]:
             lines.append(
                 f"    - 杆件{mb['id']}: 强度 {mb['stress_ratio']:.2f} / "
@@ -419,31 +588,72 @@ class SpaceFrameAgent:
         return "\n".join(lines)
 
     def _ask_with_llm(self, user_text: str) -> Optional[str]:
+        """LLM Function Calling 主链路：注册全部建模工具，支持多轮修正。
+
+        工具调用返回 error 时把错误回传给 LLM 让它修正参数（最多 3 轮），
+        防止幻觉导致的无效构型。
+        """
+        tools = self.TOOLS + [self.CUSTOM_TOOL]
         messages = [
             {'role': 'system', 'content': self.SYSTEM_PROMPT},
             {'role': 'user', 'content': user_text},
         ]
-        resp = self.llm.chat(messages, tools=self.TOOLS)
-        if not resp:
-            return None
-        try:
-            msg = resp['choices'][0]['message']
-        except (KeyError, IndexError):
-            return None
-
-        # 处理工具调用
-        if msg.get('tool_calls'):
+        for _round in range(3):
+            resp = self.llm.chat(messages, tools=tools)
+            if not resp:
+                return None
             try:
-                args = json.loads(msg['tool_calls'][0]['function']['arguments'])
-            except (json.JSONDecodeError, KeyError, IndexError):
+                msg = resp['choices'][0]['message']
+            except (KeyError, IndexError):
+                return None
+
+            # 未触发工具调用：把内容按规则刚架参数解释（最后交给 LLM 总结）
+            if not msg.get('tool_calls'):
+                args = parse_params_rules(msg.get('content') or user_text)
+                try:
+                    tool_result = self._execute_build(vars(args))
+                except ValueError as e:
+                    tool_result = {'error': str(e)}
+                messages.append(msg)
+                messages.append({'role': 'tool', 'tool_call_id': '0',
+                                 'content': json.dumps(tool_result,
+                                                       ensure_ascii=False)})
+                final = self.llm.chat(messages, temperature=0.4)
+                if final:
+                    try:
+                        return final['choices'][0]['message']['content']
+                    except (KeyError, IndexError):
+                        pass
+                return self._format_tool_report(tool_result)
+
+            # 有工具调用：执行（取第一个 tool call）
+            tc = msg['tool_calls'][0]
+            try:
+                args = json.loads(tc['function']['arguments'] or '{}')
+            except json.JSONDecodeError:
                 args = {}
-            tool_result = self._execute_build(args)
+            fn = tc['function']['name']
+            try:
+                if fn == 'build_custom_model':
+                    tool_result = self._execute_custom(args)
+                elif fn == 'build_truss_bridge':
+                    tool_result = self._execute_bridge(args)
+                else:
+                    tool_result = self._execute_build(args)
+            except ValueError as e:
+                tool_result = {'error': str(e)}
+
             messages.append(msg)
             messages.append({
                 'role': 'tool',
-                'tool_call_id': msg['tool_calls'][0]['id'],
+                'tool_call_id': tc['id'],
                 'content': json.dumps(tool_result, ensure_ascii=False),
             })
+            self._tool_result_cache = tool_result
+
+            # 有错误 -> 继续循环让 LLM 修正；成功 -> 取最终总结
+            if tool_result.get('error'):
+                continue
             final = self.llm.chat(messages, temperature=0.4)
             if not final:
                 return None
@@ -452,31 +662,32 @@ class SpaceFrameAgent:
             except (KeyError, IndexError):
                 return None
 
-        # 未触发工具调用：把内容解释为参数
-        args = parse_params_rules(msg.get('content') or user_text)
-        tool_result = self._execute_build(vars(args))
-        messages.append(msg)
-        messages.append({'role': 'tool', 'tool_call_id': '0',
-                         'content': json.dumps(tool_result, ensure_ascii=False)})
-        final = self.llm.chat(messages, temperature=0.4)
-        if final:
-            try:
-                return final['choices'][0]['message']['content']
-            except (KeyError, IndexError):
-                pass
-        return self._format_report(tool_result)
+        # 三轮均失败
+        last = self._last_tool_result.get('error', '模型参数无法通过程序校验')
+        return (f"抱歉，自动建模在多次尝试后仍未成功：{last}。\n"
+                f"你可以换一种描述，或改用'自由建模'直接粘贴节点/杆件表。")
+
+    @property
+    def _last_tool_result(self) -> Dict[str, Any]:
+        return getattr(self, '_tool_result_cache', {})
 
     def _ask_with_rules(self, user_text: str) -> str:
         params = parse_params_rules(user_text)
         tool_result = self._execute_build(vars(params))
         return self._format_report(tool_result)
 
-    def _format_report(self, tool_result: Dict[str, Any]) -> str:
-        """把结构化结果格式化为中文报告（无 LLM 时的最终回复）。"""
+    def _format_tool_report(self, tool_result: Dict[str, Any]) -> str:
+        """统一结构化结果 -> 中文报告（刚架 / 桁架桥 / 任意构型通用）。
+
+        若结果带 error 键，直接回显错误（供无 LLM 兜底时提示用户）。
+        """
+        if tool_result.get('error'):
+            return f"模型校验未通过：{tool_result['error']}"
         m = tool_result['model']
         lines = [
-            f"已按你的描述完成空间刚架分析：",
-            f"· 模型：{m['nodes']} 个节点，{m['members']} 根杆件，参考跨度 {m['span']} m",
+            f"已按你的描述完成结构分析：",
+            f"· 模型：{m['nodes']} 个节点，{m['members']} 根杆件，"
+            f"参考跨度 {m['span']} m",
             f"· 最大位移：{tool_result['max_displacement_mm']} mm"
             f"（位移比 {tool_result['deflection_ratio']:.2f}）",
         ]
@@ -485,7 +696,7 @@ class SpaceFrameAgent:
         else:
             lines.append(
                 f"· 规范校核：结构**不满足**要求，最不利构件为 "
-                f"{tool_result['worst_member']} 号，综合应力比 "
+                f"{tool_result['worst_member']} 号，最大控制指标 "
                 f"{tool_result['worst_ratio']}（超限）")
         lines.append("· 主要构件应力比：")
         for mb in tool_result['members'][:10]:
@@ -494,3 +705,7 @@ class SpaceFrameAgent:
                 f"稳定 {mb['stability_ratio']:.2f} / λ {mb['slenderness']:.0f} "
                 f"{'OK' if mb['ok'] else '超限'}")
         return "\n".join(lines)
+
+    def _format_report(self, tool_result: Dict[str, Any]) -> str:
+        """把结构化结果格式化为中文报告（无 LLM 时的最终回复）。"""
+        return self._format_tool_report(tool_result)

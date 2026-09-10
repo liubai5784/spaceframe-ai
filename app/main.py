@@ -29,6 +29,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.agent import SpaceFrameAgent, LLMClient
+from src.custom_model import build_custom_model, parse_custom_text
 from src.s2k_parser import parse_s2k
 from src.fem import solve
 from src.checks import check_model, CheckOptions
@@ -50,6 +51,10 @@ app.mount('/vendor', StaticFiles(directory=os.path.join(WEB_DIR, 'vendor')),
 
 class AnalyzeRequest(BaseModel):
     text: str
+
+
+class ModelRequest(BaseModel):
+    spec: dict
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +159,36 @@ def analyze(req: AnalyzeRequest):
         'reply': reply,
         'data': _model_json(agent),
     }
+
+
+@app.post("/api/model")
+def analyze_model(req: ModelRequest):
+    """通用构型建模：直接提交 nodes/members/supports/loads 的 JSON 描述。"""
+    agent = SpaceFrameAgent()
+    try:
+        spec = req.spec
+        model = build_custom_model(spec)
+        result = solve(model)
+        steel = spec.get('steel_grade', 'Q355')
+        opts = CheckOptions(steel_grade=steel, ref_span=spec.get('ref_span'))
+        report = check_model(model, result, opts)
+        agent.last_model, agent.last_result, agent.last_report = model, result, report
+        reply = report.summary()
+        return {'reply': reply, 'data': _model_json(agent)}
+    except ValueError as e:
+        # 模型校验失败 -> 返回具体中文错误（节点/杆件/截面/支座问题）
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/analyze_text_model")
+def analyze_text_model(req: AnalyzeRequest):
+    """自由文本建模：粘贴 '节点:/杆件:/支座:/荷载:' 文本 -> 分析。"""
+    agent = SpaceFrameAgent()
+    try:
+        spec = parse_custom_text(req.text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"文本解析失败：{e}")
+    return analyze_model(ModelRequest(spec=spec))
 
 
 @app.post("/api/upload")

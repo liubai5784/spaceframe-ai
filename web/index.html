@@ -46,6 +46,22 @@
   .btn:hover { opacity: .9; }
   .btn.ghost { background: #fff; color: #1A1B1C; border: 1px solid #E4E3DD; }
 
+  /* 面板页签 */
+  .tabs { display: flex; border-bottom: 1px solid #E4E3DD; background: #FAFAF8; }
+  .tab { flex: 1; padding: 8px 0; text-align: center; font-size: 13px; color: #6B7280;
+         cursor: pointer; border-bottom: 2px solid transparent; user-select: none; }
+  .tab.active { color: #1A1B1C; font-weight: 600; border-bottom-color: #9BBBF4; background: #fff; }
+  .tabpane { display: none; flex: 1; min-height: 0; }
+  .tabpane.active { display: flex; flex-direction: column; }
+
+  /* 自由建模面板 */
+  #paneModel { padding: 10px; gap: 8px; }
+  #paneModel textarea { height: auto; flex: 1; font-family: Consolas, monospace;
+                        font-size: 12px; line-height: 1.45; resize: vertical; min-height: 160px;
+                        background: #FBFBF9; }
+  .modelbar { display: flex; gap: 8px; align-items: center; }
+  .modelbar .tip { font-size: 11px; color: #9ca3af; }
+
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
   th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #F0EFEA; }
   th:first-child, td:first-child { text-align: left; }
@@ -71,15 +87,41 @@
   </div>
 
   <div id="panel">
-    <div class="chat" id="chat">
-      <div class="msg agent">你好！我是空间刚架智能计算助手。你可以：
-· 用自然语言描述结构，例如：<i>"做一个 8×6×4m 的两层刚架，柱 HW300，梁 HN400，顶部荷载 20kN/m²"</i>
-· 或者上传 SAP2000 导出的 .s2k 模型文件</div>
+    <div class="tabs">
+      <div class="tab active" id="tabChat">💬 对话建模</div>
+      <div class="tab" id="tabModel">📐 自由建模</div>
     </div>
-    <div class="inputbar">
-      <button class="btn ghost" id="btnUpload" title="上传 .s2k 文件">📂</button>
-      <textarea id="input" placeholder="描述你的空间刚架…（回车发送）"></textarea>
-      <button class="btn" id="btnSend">分析</button>
+
+    <div class="tabpane active" id="paneChat">
+      <div class="chat" id="chat">
+        <div class="msg agent">你好！我是空间刚架智能计算助手。你可以：
+· 用自然语言描述结构，例如：<i>"做一个 8×6×4m 的两层刚架，柱 HW300，梁 HN400，顶部荷载 20kN/m²"</i>
+· 描述任意构型，例如：<i>"一个 6m 高的四角锥塔架，底部四角固定，顶部受 200kN 竖向荷载"</i>
+· 或者上传 SAP2000 导出的 .s2k 模型文件</div>
+      </div>
+      <div class="inputbar">
+        <button class="btn ghost" id="btnUpload" title="上传 .s2k 文件">📂</button>
+        <textarea id="input" placeholder="描述你的空间刚架…（回车发送）"></textarea>
+        <button class="btn" id="btnSend">分析</button>
+      </div>
+    </div>
+
+    <div class="tabpane" id="paneModel">
+      <textarea id="modelInput" spellcheck="false"
+        placeholder='粘贴任意构型的模型 JSON，如：
+{
+  "units": {"length": "m", "force": "kN"},
+  "nodes": [ {"id":1,"x":0,"y":0,"z":0}, {"id":2,"x":6,"y":0,"z":0} ],
+  "members": [ {"i":1,"j":2,"section":"HW200"} ],
+  "supports": [ {"node":1} ],
+  "nodal_loads": [ {"node":2,"fz":-100} ],
+  "steel_grade": "Q355"
+}'></textarea>
+      <div class="modelbar">
+        <span class="tip">节点坐标 m（或 units 指定 mm），力 kN（或 N），fix 可省略=全固定</span>
+        <button class="btn ghost" id="btnExample">填入示例</button>
+        <button class="btn" id="btnModel">计算</button>
+      </div>
     </div>
   </div>
 </main>
@@ -440,6 +482,87 @@ if (!use2D) {
     else { hideDetail(); clearHighlight3D(); }
   });
 }
+
+// ---------------- 页签切换 ----------------
+const tabChat = document.getElementById('tabChat');
+const tabModel = document.getElementById('tabModel');
+const paneChat = document.getElementById('paneChat');
+const paneModel = document.getElementById('paneModel');
+function switchTab(which) {
+  tabChat.classList.toggle('active', which === 'chat');
+  tabModel.classList.toggle('active', which === 'model');
+  paneChat.classList.toggle('active', which === 'chat');
+  paneModel.classList.toggle('active', which === 'model');
+  if (which === 'chat') input.focus();
+  resize();
+}
+tabChat.addEventListener('click', () => switchTab('chat'));
+tabModel.addEventListener('click', () => switchTab('model'));
+
+// ---------------- 自由建模 ----------------
+const modelInput = document.getElementById('modelInput');
+const btnExample = document.getElementById('btnExample');
+const btnModel = document.getElementById('btnModel');
+
+const EXAMPLE_SPEC = {
+  units: { length: 'm', force: 'kN' },
+  nodes: [
+    { id: 1, x: -2, y: -2, z: 0 }, { id: 2, x: 2, y: -2, z: 0 },
+    { id: 3, x: 2, y: 2, z: 0 }, { id: 4, x: -2, y: 2, z: 0 },
+    { id: 5, x: 0, y: 0, z: 6 }
+  ],
+  members: [
+    { i: 1, j: 2, section: 'HW200' }, { i: 2, j: 3, section: 'HW200' },
+    { i: 3, j: 4, section: 'HW200' }, { i: 4, j: 1, section: 'HW200' },
+    { i: 1, j: 5, section: 'HW150' }, { i: 2, j: 5, section: 'HW150' },
+    { i: 3, j: 5, section: 'HW150' }, { i: 4, j: 5, section: 'HW150' }
+  ],
+  supports: [
+    { node: 1 }, { node: 2 }, { node: 3 }, { node: 4 }
+  ],
+  nodal_loads: [ { node: 5, fz: -200 } ],
+  steel_grade: 'Q355',
+  ref_span: 6.0
+};
+
+btnExample.addEventListener('click', function() {
+  modelInput.value = JSON.stringify(EXAMPLE_SPEC, null, 2);
+});
+
+async function analyzeModel() {
+  const raw = modelInput.value.trim();
+  if (!raw) { addMsg('agent', '⚠️ 请先粘贴模型 JSON，或点"填入示例"'); return; }
+  let spec;
+  try { spec = JSON.parse(raw); }
+  catch (e) { addMsg('agent', '⚠️ JSON 格式错误：' + e.message); return; }
+  switchTab('chat');
+  addMsg('user', '📐 自由建模：' + (spec.nodes ? spec.nodes.length + ' 节点 / ' +
+         (spec.members ? spec.members.length : 0) + ' 杆件' : '未知模型'));
+  const loading = addMsg('loading', '分析中…');
+  try {
+    const resp = await fetch('/api/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spec: spec })
+    });
+    const json = await resp.json().catch(() => ({}));
+    loading.remove();
+    if (!resp.ok) {
+      addMsg('agent', '⚠️ ' + (json.detail || ('请求失败（' + resp.status + '）')));
+      return;
+    }
+    addMsg('agent', json.reply.replace(/\n/g, '<br>'));
+    if (json.data && json.data.model && json.data.model.nodes) {
+      renderModel(json.data);
+      addMsg('agent', resultHtml(json.data));
+    }
+  } catch (e) {
+    loading.remove();
+    addMsg('agent', '分析失败：' + e.message);
+  }
+}
+
+btnModel.addEventListener('click', analyzeModel);
 
 // ---------------- 聊天与结果 ----------------
 const chat = document.getElementById('chat');
