@@ -345,25 +345,35 @@ function renderModel(data) {
     modelGroup.add(sph);
   }
 
-  // 杆件标号标签（sprite，始终面向相机）
-  function makeLabel(text, color) {
+  // 杆件标号标签（sprite，始终面向相机）- 自适应尺寸
+  function makeLabel(text, color, L) {
+    const baseL = 10; // 基准结构尺寸，用于计算相对比例
+    const s = Math.max(L / baseL, 0.5); // 缩放因子，最小0.5
+    const cw = Math.round(160 * s);
+    const ch = Math.round(64 * s);
+    const fs = Math.round(42 * s);
     const c = document.createElement('canvas');
-    c.width = 160; c.height = 64;
+    c.width = cw; c.height = ch;
     const g = c.getContext('2d');
-    g.font = 'bold 42px sans-serif';
+    g.font = 'bold ' + fs + 'px sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
     const tw = g.measureText(text).width;
     g.fillStyle = 'rgba(255,255,255,0.92)';
+    const pad = Math.round(10 * s);
+    const bx = Math.round(cw/2 - tw/2);
+    const by = Math.round(ch/2 - fs/2);
+    const bw = Math.round(tw + pad*2);
+    const bh = Math.round(fs + pad);
     if (typeof g.roundRect === 'function') {
       g.beginPath();
-      g.roundRect(80 - tw/2 - 10, 8, tw + 20, 48, 10);
+      g.roundRect(bx - pad, by, bw, bh, Math.round(10 * s));
       g.fill();
     } else {
-      g.fillRect(80 - tw/2 - 10, 8, tw + 20, 48);
+      g.fillRect(bx - pad, by, bw, bh);
     }
-    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2; g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = Math.max(Math.round(2 * s), 1); g.stroke();
     g.fillStyle = color || '#333';
-    g.fillText(text, 80, 32);
+    g.fillText(text, cw/2, ch/2);
     const tex = new THREE.CanvasTexture(c);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({
       map: tex, transparent: true, depthTest: false, sizeAttenuation: true }));
@@ -392,7 +402,7 @@ function renderModel(data) {
     cyl.userData.mid = mb.id;   // 点击识别用
     modelGroup.add(cyl);
     // 杆件标号
-    const lb = makeLabel('#' + mb.id, mb.ok ? '#333' : '#c0392b');
+    const lb = makeLabel('#' + mb.id, mb.ok ? '#333' : '#c0392b', L);
     lb.position.set((ax+bx)/2, (ay+by)/2 + L*0.035, (az+bz)/2);
     lb.userData.mid = mb.id;   // 点标签也能选中
     modelGroup.add(lb);
