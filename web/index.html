@@ -174,7 +174,8 @@ if (use2D) {
   scene.add(dirLight);
 
   // 地面网格
-  const grid = new THREE.GridHelper(10, 10, 0xcccccc, 0xeeeeee);
+  const grid = new THREE.GridHelper(20, 20, 0xcccccc, 0xeeeeee);
+  window.__grid = grid;
   scene.add(grid);
 
   // 轴
@@ -182,15 +183,20 @@ if (use2D) {
 }
 
 function fitCamera(box) {
-  // box 为结构坐标 (x,y,z)，z 是高度；Three.js y-up -> 相机目标换成 (cx, cz, cy)
+  // box 为结构坐标 (x,y,z)，z 是高度；Three.js y-up
   const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
-  const r = Math.max(box[3]-box[0], box[4]-box[1], box[5]-box[2], 1) * 1.6;
-  camera.position.set(cx + r*0.8, cz + r*0.7, cy + r);
+  const dx = box[3]-box[0], dy = box[4]-box[1], dz = box[5]-box[2];
+  const r = Math.max(dx, dy, dz, 1) * 1.8;
+  // 相机放在结构上方偏前，让 z(高度) 在屏幕上方，y(深度) 在屏幕侧面
+  camera.position.set(cx + r*0.6, cz + r*0.8, cy + r);
   camera.lookAt(cx, cz, cy);
-  if (controls) controls.target.set(cx, cz, cy);
+  if (controls) {
+    controls.target.set(cx, cz, cy);
+    controls.update();
+  }
   if (window.__grid) {
     window.__grid.position.y = box[2];
-    window.__grid.scale.set(r/5, 1, r/5);
+    window.__grid.scale.set(Math.max(r/5, 1), 1, Math.max(r/5, 1));
   }
 }
 
@@ -403,7 +409,7 @@ function renderModel(data) {
     modelGroup.add(cyl);
     // 杆件标号
     const lb = makeLabel('#' + mb.id, mb.ok ? '#333' : '#c0392b', L);
-    lb.position.set((ax+bx)/2, (ay+by)/2 + L*0.035, (az+bz)/2);
+    lb.position.set((ax+bx)/2, (ay+by)/2 + L*0.05, (az+bz)/2);
     lb.userData.mid = mb.id;   // 点标签也能选中
     modelGroup.add(lb);
   }
