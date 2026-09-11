@@ -132,8 +132,11 @@ class FrameModel:
     # ------------------------------------------------------------------
     # 便捷方法
     # ------------------------------------------------------------------
-    def add_node(self, x: float, y: float, z: float) -> int:
-        nid = max(self.nodes.keys(), default=0) + 1
+    def add_node(self, x: float, y: float, z: float, nid: int = None) -> int:
+        if nid is None:
+            nid = max(self.nodes.keys(), default=0) + 1
+        if nid in self.nodes:
+            raise ValueError(f"节点 {nid} 已存在")
         self.nodes[nid] = Node(nid, x, y, z)
         return nid
 
