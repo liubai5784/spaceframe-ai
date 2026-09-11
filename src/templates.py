@@ -170,7 +170,8 @@ def build_truss_bridge(p: TrussBridgeParams) -> FrameModel:
         add(nid(i, 3), nid(i + 1, 3), chord['name'])
         add(nid(i, 4), nid(i + 1, 4), chord['name'])
         # 斜腹杆（按剪力方向跨中对称布置，使斜杆受拉 = Pratt 式）
-        if i < (n - 1) / 2:
+        half = n / 2.0
+        if i < half:
             add(nid(i, 3), nid(i + 1, 1), web['name'])   # 左半：\ 方向
             add(nid(i, 4), nid(i + 1, 2), web['name'])
         else:
