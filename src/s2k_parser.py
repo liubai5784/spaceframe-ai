@@ -297,8 +297,17 @@ def parse_s2k(path: str, load_patterns: List[str] | None = None,
         if not want_pattern(row.get('LoadPat', '')):
             continue
         fname = row['Frame']
-        mid = int(fname)
-        if mid not in model.members:
+        mid = None
+        for mk in model.members:
+            if str(mk) == str(fname):
+                mid = mk
+                break
+        if mid is None:
+            try:
+                mid = int(fname)
+            except ValueError:
+                pass
+        if mid is None or mid not in model.members:
             raise S2KError(f"分布荷载引用不存在的杆件 {fname}")
         load_type = row.get('Type', 'Force').strip().lower()
         frame, axis = _map_load_dir(row.get('Dir', 'Local 1'))
