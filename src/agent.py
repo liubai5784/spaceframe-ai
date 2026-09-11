@@ -663,13 +663,9 @@ class SpaceFrameAgent:
                 return None
 
         # 三轮均失败
-        last = self._last_tool_result.get('error', '模型参数无法通过程序校验')
+        last = self._tool_result_cache.get('error', '模型参数无法通过程序校验')
         return (f"抱歉，自动建模在多次尝试后仍未成功：{last}。\n"
                 f"你可以换一种描述，或改用'自由建模'直接粘贴节点/杆件表。")
-
-    @property
-    def _last_tool_result(self) -> Dict[str, Any]:
-        return getattr(self, '_tool_result_cache', {})
 
     def _ask_with_rules(self, user_text: str) -> str:
         params = parse_params_rules(user_text)
