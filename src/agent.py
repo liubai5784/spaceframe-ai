@@ -58,6 +58,29 @@ class LLMClient:
     def available(self) -> bool:
         return bool(self.api_key)
 
+    @staticmethod
+    def _filter_messages(messages: List[dict]) -> List[dict]:
+        """过滤掉图片消息，只保留文本内容。防止不支持视觉输入的模型报错。"""
+        filtered = []
+        for msg in messages:
+            if msg.get('role') == 'user':
+                content = msg.get('content', [])
+                if isinstance(content, list):
+                    # 过滤掉 image_url 类型的消息
+                    text_parts = [c for c in content if c.get('type') != 'image_url']
+                    if text_parts:
+                        msg = dict(msg)
+                        msg['content'] = text_parts
+                        filtered.append(msg)
+                    # 如果没有文本内容了，跳过这条消息
+                elif isinstance(content, str):
+                    filtered.append(msg)
+                else:
+                    filtered.append(msg)
+            else:
+                filtered.append(msg)
+        return filtered
+
     def chat(self, messages: List[dict], tools: Optional[List[dict]] = None,
              temperature: float = 0.2) -> Optional[dict]:
         """调用 chat completions，返回完整响应（含 tool_calls 时原样返回）。"""
@@ -66,6 +89,10 @@ class LLMClient:
         try:
             import httpx
         except ImportError:
+            return None
+        # 过滤图片消息，防止不支持视觉输入的模型报错
+        messages = self._filter_messages(messages)
+        if not messages:
             return None
         payload: Dict[str, Any] = {
             'model': self.model,
@@ -84,7 +111,11 @@ class LLMClient:
             )
             resp.raise_for_status()
             return resp.json()
-        except Exception as e:                      # 网络/鉴权失败时降级
+        except Exception as e:                      # 网络/鉴权/图片不支持时降级
+            err_str = str(e)
+            if 'image' in err_str.lower() or 'vision' in err_str.lower() or '图片' in err_str:
+                print(f"[Agent] 模型不支持图片输入，已自动过滤，降级为规则解析")
+                return None
             print(f"[Agent] LLM 调用失败，降级为规则解析: {e}")
             return None
 
