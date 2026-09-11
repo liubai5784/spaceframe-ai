@@ -350,9 +350,9 @@ function renderModel(data) {
   function makeLabel(text, color, L) {
     const baseL = 10; // 基准结构尺寸，用于计算相对比例
     const s = Math.max(L / baseL, 0.5); // 缩放因子，最小0.5
-    const cw = Math.round(160 * s);
-    const ch = Math.round(64 * s);
-    const fs = Math.round(42 * s);
+    const cw = Math.round(120 * s);
+    const ch = Math.round(44 * s);
+    const fs = Math.round(26 * s);
     const c = document.createElement('canvas');
     c.width = cw; c.height = ch;
     const g = c.getContext('2d');
@@ -360,7 +360,7 @@ function renderModel(data) {
     g.textAlign = 'center'; g.textBaseline = 'middle';
     const tw = g.measureText(text).width;
     g.fillStyle = 'rgba(255,255,255,0.92)';
-    const pad = Math.round(10 * s);
+    const pad = Math.round(6 * s);
     const bx = Math.round(cw/2 - tw/2);
     const by = Math.round(ch/2 - fs/2);
     const bw = Math.round(tw + pad*2);
@@ -378,7 +378,7 @@ function renderModel(data) {
     const tex = new THREE.CanvasTexture(c);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({
       map: tex, transparent: true, depthTest: false, sizeAttenuation: true }));
-    sp.scale.set(L*0.16, L*0.064, 1);
+    sp.scale.set(L*0.10, L*0.04, 1);
     return sp;
   }
 
