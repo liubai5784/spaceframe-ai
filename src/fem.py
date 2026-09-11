@@ -92,8 +92,11 @@ def rotation_matrix(model: FrameModel, member, gamma: float = 0.0) -> np.ndarray
     ex = np.array([dx, dy, dz]) / L                       # 局部 x 轴
 
     # 参考向量：默认全局 Z；杆件接近平行 Z 时改用全局 Y
+    # 杆件接近平行 Y 时用 Z 避免退化，确保三角分解不会产生零向量
     if abs(ex[2]) > 0.999:
         ref = np.array([0.0, 1.0, 0.0])
+    elif abs(ex[1]) > 0.999:
+        ref = np.array([0.0, 0.0, 1.0])
     else:
         ref = np.array([0.0, 0.0, 1.0])
 
@@ -153,6 +156,8 @@ def fixed_end_forces(model: FrameModel, member) -> np.ndarray:
     wx, wy, wz = _member_uniform_loads(model, member)
     L = model.member_length(member.id)
     f = np.zeros(12)
+    # 符号约定: f = k*d + f^0; f[0..5]=i端, f[6..11]=j端; 拉为正
+    # f^0 为固端力 = 等效节点荷载的相反数
 
     # 轴向均布 wx -> 两端轴力（压为正的平衡力）
     if wx != 0.0:
