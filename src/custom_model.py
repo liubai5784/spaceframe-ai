@@ -158,7 +158,7 @@ def build_custom_model(spec: Dict[str, Any]) -> FrameModel:
 
     # ---------------- 材料 ----------------
     mat = spec.get('material') or {}
-    # 默认 E 为 SI 值（Pa = N/m²）；仅当用户显式给出 E 时才按 units 换算
+    # 默认 E = 2.06e11 Pa 为 SI 值，始终不受 units 影响；仅当用户显式给出 E 时才按 units 换算
     E = _num(mat['E'], 'E', u_len) if 'E' in mat else 2.06e11
     nu = _num(mat.get('nu', 0.3), 'nu', {})
     density = _num(mat.get('density', 7850.0), 'density', {})
