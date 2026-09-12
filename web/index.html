@@ -349,7 +349,7 @@ function renderModel(data) {
   // 杆件标号标签（sprite，始终面向相机）- 自适应尺寸
   function makeLabel(text, color, L) {
     const baseL = 10; // 基准结构尺寸，用于计算相对比例
-    const s = Math.max(L / baseL, 0.5); // 缩放因子，最小0.5
+    const s = Math.max(Math.min(L / baseL, 3), 0.5); // 缩放因子 0.5~3，防止大模型标签过大
     const cw = Math.round(120 * s);
     const ch = Math.round(44 * s);
     const fs = Math.round(26 * s);
