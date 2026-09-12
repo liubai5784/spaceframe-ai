@@ -340,7 +340,7 @@ function renderModel(data) {
   for (const n of m.nodes) {
     const d = disp[n.id] || [0,0,0];
     const sph = new THREE.Mesh(
-      new THREE.SphereGeometry(L*0.008, 12, 12),
+      new THREE.SphereGeometry(0.08, 12, 12),
       new THREE.MeshStandardMaterial({ color: 0x9BBBF4 }));
     sph.position.set(n.x + d[0]*scale, n.z + d[2]*scale, n.y + d[1]*scale);
     modelGroup.add(sph);
@@ -393,7 +393,7 @@ function renderModel(data) {
     const dx=bx-ax, dy=by-ay, dz=bz-az;
     const len = Math.sqrt(dx*dx+dy*dy+dz*dz);
     if (len < 1e-9) continue;
-    const radius = L * 0.006;
+    const radius = 0.06;
     const cyl = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius, len, 8),
       new THREE.MeshStandardMaterial({ color: colorForRatio(mb.max_ratio) }));
