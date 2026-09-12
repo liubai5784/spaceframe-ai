@@ -36,6 +36,7 @@ from .fem import AnalysisResult, member_extreme_forces
 STEEL_GRADES: Dict[str, dict] = {
     # 名称: {'fy': 屈服强度 Pa, 'f': 抗拉/抗压/抗弯设计强度 Pa}
     'Q235': {'fy': 235e6, 'f': 215e6},
+    'Q345': {'fy': 345e6, 'f': 305e6},
     'Q355': {'fy': 355e6, 'f': 305e6},
     'Q390': {'fy': 390e6, 'f': 330e6},
     'Q420': {'fy': 420e6, 'f': 360e6},
